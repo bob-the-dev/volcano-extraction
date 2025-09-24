@@ -1,0 +1,46 @@
+[gd_scene load_steps=7 format=3 uid="uid://bgjs7cfay65c2"]
+
+[ext_resource type="PackedScene" uid="uid://d3jk0k6dptuxm" path="res://models/Mini Dungeon/Models/GLB format/character-human.glb" id="1_as1t3"]
+[ext_resource type="Script" uid="uid://bm2mypjjnqmfc" path="res://addons/proto_controller/proto_controller.gd" id="1_c5lsl"]
+[ext_resource type="PackedScene" uid="uid://bs72ogkvdd7d6" path="res://addons/proto_controller/proto_controller.tscn" id="3_rehqj"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_as1t3"]
+sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+
+[sub_resource type="Sky" id="Sky_744mi"]
+sky_material = SubResource("ProceduralSkyMaterial_as1t3")
+
+[sub_resource type="Environment" id="Environment_c5lsl"]
+background_mode = 2
+sky = SubResource("Sky_744mi")
+tonemap_mode = 2
+glow_enabled = true
+
+[node name="Node3D" type="Node3D"]
+script = ExtResource("1_c5lsl")
+
+[node name="ProtoController" parent="." instance=ExtResource("3_rehqj")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.5, 0, 2.5)
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_c5lsl")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
+shadow_enabled = true
+
+[node name="character-human2" parent="." instance=ExtResource("1_as1t3")]
+transform = Transform3D(0.9396926, 0, 0.34202012, 0, 1, 0, -0.34202012, 0, 0.9396926, -0.034401774, 1.1920929e-07, -0.00869441)
+
+[node name="CSGBox3D" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.6, 0.5, 0)
+operation = 2
+size = Vector3(2.3, 1, 0.7)
+
+[node name="CSGCylinder3D" type="CSGCylinder3D" parent="CSGBox3D"]
+transform = Transform3D(0.9396926, 0.34202012, 1.4950178e-08, 3.8213705e-15, 4.371139e-08, -1, -0.3420201, 0.9396927, 4.1075268e-08, 0, 0.017413974, -0.1489858)
+operation = 2
+radius = 0.4
+height = 1.9
+sides = 40

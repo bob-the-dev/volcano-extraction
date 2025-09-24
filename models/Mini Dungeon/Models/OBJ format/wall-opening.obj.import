@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://c3vj0fspvojng"
+path="res://.godot/imported/wall-opening.obj-4356a8d18783f2041942487f09c331ad.mesh"
+
+[deps]
+
+files=["res://.godot/imported/wall-opening.obj-4356a8d18783f2041942487f09c331ad.mesh"]
+
+source_file="res://models/Mini Dungeon/Models/OBJ format/wall-opening.obj"
+dest_files=["res://.godot/imported/wall-opening.obj-4356a8d18783f2041942487f09c331ad.mesh", "res://.godot/imported/wall-opening.obj-4356a8d18783f2041942487f09c331ad.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false
