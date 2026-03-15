@@ -10,3 +10,4 @@ visible = false
 
 [node name="Body" parent="." index="1"]
 material_overlay = ExtResource("2_nsovv")
+transparency = 0.35

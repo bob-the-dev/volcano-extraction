@@ -28,9 +28,9 @@ subsurf_scatter_enabled = true
 script = ExtResource("3_1bvp3")
 
 [node name="Main" type="Node3D"]
-transform = Transform3D(-0.2868032, 0, 0.95798945, 0, 1, 0, -0.95798945, 0, -0.2868032, 0, 0, 0)
 
 [node name="fatman" parent="." instance=ExtResource("7_272bh")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0)
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_c5lsl")
@@ -42,21 +42,18 @@ shadow_normal_bias = 3.298
 shadow_opacity = 0.89
 
 [node name="Floor" type="CSGBox3D" parent="."]
-transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, -0.06711864, 0, -0.12447929)
 use_collision = true
 size = Vector3(4000, 0.01, 4000)
 material = SubResource("StandardMaterial3D_1bvp3")
 
 [node name="Player" parent="." instance=ExtResource("2_0xm2m")]
-transform = Transform3D(0.28680322, 0, 0.9579897, 0, 1, 0, -0.9579897, 0, 0.28680322, -0.71700805, 0, 2.394974)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, 0)
 jump_velocity = 3.0
 
 [node name="Camera3D" type="Camera3D" parent="."]
-physics_interpolation_mode = 1
-transform = Transform3D(-0.28680256, 0.5356994, -0.794207, 0, 0.82903516, 0.55919117, 0.95798737, 0.16037786, -0.23776993, -4.6880426, 2.795956, 1.2061243)
-projection = 1
+transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 6, 10)
 current = true
-size = 5.895
+fov = 60.0
 
 [node name="PhantomCameraHost" type="Node" parent="Camera3D"]
 process_priority = 300
@@ -64,34 +61,82 @@ process_physics_priority = 300
 script = ExtResource("2_1bvp3")
 metadata/_custom_type_script = "uid://bd046eokvcnu2"
 
-[node name="PhantomCamera3D" type="Node3D" parent="." node_paths=PackedStringArray("follow_target")]
-transform = Transform3D(0.9999977, 0, 0, 0, 0.82903516, 0.55919117, 0, -0.5591913, 0.8290351, 2.5, 2.795956, 4.1451755)
+[node name="PhantomCamera3D" type="Node3D" parent="." node_paths=PackedStringArray("follow_target", "look_at_target")]
+transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 6, 10)
 top_level = true
 script = ExtResource("2_h2yge")
 priority = 1
-follow_mode = 5
-follow_target = NodePath("../Player")
+follow_mode = 3
+follow_target = NodePath("Player")
+look_at_target = NodePath("Player")
 tween_resource = SubResource("Resource_lquwl")
+follow_offset = Vector3(1.5, 3, 5)
 follow_damping = true
-follow_distance = 5.0
-dead_zone_width = 0.26
-dead_zone_height = 0.348
-vertical_rotation_offset = 0.6789330790257938
-horizontal_rotation_offset = 3.141592653589793
-spring_length = 5.0
+look_at_offset = Vector3(0, 1.5, 0)
 _preview_noise = false
 
 [node name="Rocks" parent="." instance=ExtResource("5_lquwl")]
-transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 0.5162458, 0, -1.7243813)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0, 5)
 
 [node name="Rocks2" parent="." instance=ExtResource("5_lquwl")]
-transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 1.0324916, 0, -3.4487627)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, 5)
 
 [node name="Rocks3" parent="." instance=ExtResource("5_lquwl")]
-transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 1.5487374, 0, -5.173144)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1, 0, 5)
 
 [node name="Rocks4" parent="." instance=ExtResource("5_lquwl")]
-transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 2.0649831, 0, -6.8975253)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 5)
 
 [node name="Rocks5" parent="." instance=ExtResource("5_lquwl")]
-transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 2.581229, 0, -8.621906)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 5)
+
+[node name="Rocks6" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 5)
+
+[node name="Rocks7" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0, -5)
+
+[node name="Rocks8" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, -5)
+
+[node name="Rocks9" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1, 0, -5)
+
+[node name="Rocks10" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, -5)
+
+[node name="Rocks11" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, -5)
+
+[node name="Rocks12" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, -5)
+
+[node name="Rocks13" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -5, 0, 5)
+
+[node name="Rocks14" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -5, 0, 3)
+
+[node name="Rocks15" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -5, 0, 1)
+
+[node name="Rocks16" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -5, 0, -1)
+
+[node name="Rocks17" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -5, 0, -3)
+
+[node name="Rocks18" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 5, 0, 5)
+
+[node name="Rocks19" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 5, 0, 3)
+
+[node name="Rocks20" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 5, 0, 1)
+
+[node name="Rocks21" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 5, 0, -1)
+
+[node name="Rocks22" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 5, 0, -3)

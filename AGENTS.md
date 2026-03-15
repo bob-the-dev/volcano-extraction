@@ -8,6 +8,40 @@
 - **Key Systems:** Character movement, enemy AI with navigation, camera management
 - **Player Character:** Blobby figure without distinct head/neck separation, has distinct arms with 4-fingered hands (not compatible with Mixamo auto-rigging)
 
+## Current Work in Progress
+
+**Status:** Rigging fatman character in Blender (March 15, 2026)
+
+**Completed Phases:**
+- ✅ Phase 1: Preparation & Understanding
+  - Downloaded Mixamo Y Bot reference rig (y_bot.fbx)
+  - Understood current character structure (Skin modifier ≠ rigging)
+  - Learned essential Blender hotkeys (Tab, Shift+A, G/R/S, Alt+Z, Ctrl+A for skin resize)
+  - Fixed mirror modifier issues on fatman character
+
+**Next Step:**
+- 📍 **Phase 2, Step 2.1:** Import Mixamo FBX into new Blender file to study bone structure
+  - Location: `blender/mixamo_reference/y_bot.fbx`
+  - Action: File → Import → FBX in new Blender window
+  - Goal: Study professional bone hierarchy for manual rig creation
+
+**Remaining Phases:**
+- Phase 2 (remainder): Study Mixamo bone structure and hierarchy
+- Phase 3: Create custom armature for fatman (spine chain + arms + 4-finger hands)
+- Phase 4: Weight painting (parent mesh to armature)
+- Phase 5: Add Mixamo animations via retargeting
+- Phase 6: Export to Godot
+- Phase 7: Verification & testing
+
+**Reference:** Full detailed plan saved in `/memories/session/plan.md`
+
+**Working Files:**
+- `blender/fatman.blend` - Character mesh (ready for rigging)
+- `blender/mixamo_reference/y_bot.fbx` - Bone structure reference
+- `playable_fatman.tscn` - Godot scene (will update with rigged version)
+
+---
+
 ## Code Style & Conventions
 
 ### GDScript Standards
@@ -65,13 +99,6 @@
 - Free resources when no longer needed to prevent memory leaks
 
 ## Current Project Addons
-
-### Terrain3D
-
-- Used for procedural terrain generation
-- Access via `Terrain3D` node
-- Use `terrain.data.get_height(position)` to get terrain height at any world position
-- Supports texture blending, mesh instancing, and runtime navigation baking
 
 ### Phantom Camera
 
@@ -185,16 +212,6 @@ func _process(delta: float) -> void:
 	if _timer >= COOLDOWN:
 		_timer = 0.0
 		# Do timed action
-```
-
-### Getting Terrain Height
-
-```gdscript
-@onready var terrain: Terrain3D = get_parent().find_child("Terrain3D")
-
-func snap_to_terrain() -> void:
-	if terrain:
-		global_position.y = terrain.data.get_height(global_position)
 ```
 
 ### Input Handling

@@ -30,6 +30,8 @@ extends CharacterBody3D
 @export var jump_velocity : float = 4.5
 ## How fast do we run?
 @export var sprint_speed : float = 4.0
+## How fast the character rotates to face movement direction.
+@export var rotation_speed : float = 10.0
 
 func _ready() -> void:
 	#animation_player.play('idle')
@@ -68,17 +70,23 @@ func _physics_process(delta: float) -> void:
 		var input_dir := Input.get_vector(input_left, input_right, input_forward, input_back)
 		if input_dir.length() != 0:
 			if animation_player.current_animation != 'walk':
-				animation_player.play('walk');
-		var move_dir := (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
-		if move_dir:
-			velocity.x = move_dir.x * move_speed
-			velocity.z = move_dir.z * move_speed
+				animation_player.play('walk')
+			# Use world-space movement (orthogonal)
+			velocity.x = input_dir.x * move_speed
+			velocity.z = input_dir.y * move_speed
+			
+			# Rotate character to face movement direction
+			var target_rotation := atan2(input_dir.x, input_dir.y)
+			rotation.y = lerp_angle(rotation.y, target_rotation, rotation_speed * delta)
 		else:
-			velocity.x = move_toward(velocity.x , 0, move_speed)
+			# Smoothly stop when no input
+			velocity.x = move_toward(velocity.x, 0, move_speed)
 			velocity.z = move_toward(velocity.z, 0, move_speed)
+			if animation_player.current_animation == 'walk':
+				animation_player.play('idle')
 	else:
 		velocity.x = 0
-		velocity.y = 0
+		velocity.z = 0
 	
 	# Use velocity to actually move
 

@@ -3,5 +3,6 @@
 [resource]
 cull_mode = 1
 shading_mode = 0
+heightmap_scale = 4.905
 grow = true
 grow_amount = 0.02

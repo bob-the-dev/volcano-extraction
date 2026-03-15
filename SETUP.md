@@ -68,7 +68,6 @@ This enables autocomplete and IntelliSense for GDScript:
 - Scene composition (adding nodes, positioning objects)
 - 3D viewport navigation and object placement
 - Inspector property editing
-- Terrain editing with Terrain3D
 - Animation timeline editing
 - Resource files (.tres) editing
 
@@ -94,7 +93,7 @@ With AGENTS.md in place, Copilot will:
 - Understand you're working with Godot 4.5 and GDScript
 - Follow Godot naming conventions and best practices
 - Suggest complete, typed GDScript functions
-- Understand your project's addons (Terrain3D, Phantom Camera)
+- Understand your project's addons (Phantom Camera)
 - Provide context-aware suggestions for game logic
 
 ### Example Prompts:
