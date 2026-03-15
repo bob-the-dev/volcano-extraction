@@ -1,9 +1,11 @@
-[gd_scene load_steps=9 format=3 uid="uid://bgjs7cfay65c2"]
+[gd_scene load_steps=12 format=3 uid="uid://bgjs7cfay65c2"]
 
 [ext_resource type="PackedScene" uid="uid://bknmich6p0hft" path="res://player.tscn" id="2_0xm2m"]
 [ext_resource type="Script" uid="uid://bd046eokvcnu2" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="2_1bvp3"]
 [ext_resource type="Script" uid="uid://csjccrhj5wnx7" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="2_h2yge"]
 [ext_resource type="Script" uid="uid://8umksf8e80fw" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="3_1bvp3"]
+[ext_resource type="PackedScene" uid="uid://cna1yn3gc6g7f" path="res://WallPart.tscn" id="5_lquwl"]
+[ext_resource type="PackedScene" uid="uid://cbtsfodktiu7k" path="res://playable_fatman.tscn" id="7_272bh"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_as1t3"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
@@ -18,43 +20,43 @@ sky = SubResource("Sky_744mi")
 tonemap_mode = 2
 glow_enabled = true
 
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1bvp3"]
+albedo_color = Color(0, 0.50828844, 0.80689526, 1)
+subsurf_scatter_enabled = true
+
 [sub_resource type="Resource" id="Resource_lquwl"]
 script = ExtResource("3_1bvp3")
-duration = 1.62
-transition = 1
-ease = 0
 
 [node name="Main" type="Node3D"]
+transform = Transform3D(-0.2868032, 0, 0.95798945, 0, 1, 0, -0.95798945, 0, -0.2868032, 0, 0, 0)
+
+[node name="fatman" parent="." instance=ExtResource("7_272bh")]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_c5lsl")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
+transform = Transform3D(0.6692641, -0.53118074, 0.51955044, -0.55667037, 0.10468693, 0.8241109, -0.49214202, -0.8407662, -0.22562942, 0, 5.4, 0)
 shadow_enabled = true
-
-[node name="CSGBox3D" type="CSGBox3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.6, 0.5, 0)
-operation = 2
-use_collision = true
-size = Vector3(2.3, 1, 0.7)
-
-[node name="CSGCylinder3D" type="CSGCylinder3D" parent="CSGBox3D"]
-transform = Transform3D(0.9396926, 0.34202012, 1.4950178e-08, 3.8213705e-15, 4.371139e-08, -1, -0.3420201, 0.9396927, 4.1075268e-08, 0, 0.017413974, -0.1489858)
-operation = 2
-radius = 0.4
-height = 1.9
-sides = 40
+shadow_normal_bias = 3.298
+shadow_opacity = 0.89
 
 [node name="Floor" type="CSGBox3D" parent="."]
+transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, -0.06711864, 0, -0.12447929)
 use_collision = true
 size = Vector3(4000, 0.01, 4000)
+material = SubResource("StandardMaterial3D_1bvp3")
 
 [node name="Player" parent="." instance=ExtResource("2_0xm2m")]
+transform = Transform3D(0.28680322, 0, 0.9579897, 0, 1, 0, -0.9579897, 0, 0.28680322, -0.71700805, 0, 2.394974)
+jump_velocity = 3.0
 
 [node name="Camera3D" type="Camera3D" parent="."]
 physics_interpolation_mode = 1
-transform = Transform3D(-1, -5.560972e-08, 6.891786e-08, -3.5527137e-15, 0.77824306, 0.6279632, -8.85557e-08, 0.6279632, -0.77824306, 0.37500018, 1.7363182, -2.151842)
+transform = Transform3D(-0.28680256, 0.5356994, -0.794207, 0, 0.82903516, 0.55919117, 0.95798737, 0.16037786, -0.23776993, -4.6880426, 2.795956, 1.2061243)
+projection = 1
+current = true
+size = 5.895
 
 [node name="PhantomCameraHost" type="Node" parent="Camera3D"]
 process_priority = 300
@@ -63,17 +65,33 @@ script = ExtResource("2_1bvp3")
 metadata/_custom_type_script = "uid://bd046eokvcnu2"
 
 [node name="PhantomCamera3D" type="Node3D" parent="." node_paths=PackedStringArray("follow_target")]
-transform = Transform3D(-1, -5.560972e-08, 6.891786e-08, -3.5527137e-15, 0.77824306, 0.6279632, -8.85557e-08, 0.6279632, -0.77824306, 0.37500018, 1.7363182, -2.151842)
+transform = Transform3D(0.9999977, 0, 0, 0, 0.82903516, 0.55919117, 0, -0.5591913, 0.8290351, 2.5, 2.795956, 4.1451755)
 top_level = true
 script = ExtResource("2_h2yge")
 priority = 1
 follow_mode = 5
 follow_target = NodePath("../Player")
 tween_resource = SubResource("Resource_lquwl")
-follow_offset = Vector3(0.375, 0, 0)
-follow_distance = 2.765
-dead_zone_width = 0.375
-dead_zone_height = 0.071
+follow_damping = true
+follow_distance = 5.0
+dead_zone_width = 0.26
+dead_zone_height = 0.348
 vertical_rotation_offset = 0.6789330790257938
 horizontal_rotation_offset = 3.141592653589793
-spring_length = 2.765
+spring_length = 5.0
+_preview_noise = false
+
+[node name="Rocks" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 0.5162458, 0, -1.7243813)
+
+[node name="Rocks2" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 1.0324916, 0, -3.4487627)
+
+[node name="Rocks3" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 1.5487374, 0, -5.173144)
+
+[node name="Rocks4" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 2.0649831, 0, -6.8975253)
+
+[node name="Rocks5" parent="." instance=ExtResource("5_lquwl")]
+transform = Transform3D(-0.28680322, 0, -0.9579896, 0, 1, 0, 0.9579896, 0, -0.28680322, 2.581229, 0, -8.621906)

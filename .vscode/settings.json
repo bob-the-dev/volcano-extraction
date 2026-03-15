@@ -1,0 +1,35 @@
+{
+  // Godot Tools Configuration
+  // Update the path below to point to your Godot 4.5 executable
+  "godot_tools.editor_path": "C:\\Path\\To\\Godot_v4.5_Engine.exe",
+  "godot_tools.gdscript_lsp_server_port": 6005,
+  "godot_tools.gdscript_lsp_server_host": "localhost",
+
+  // Editor Settings
+  "files.exclude": {
+    "**/.godot/**": true
+  },
+
+  // File Associations
+  "files.associations": {
+    "*.gd": "gdscript",
+    "*.tscn": "godot-scene",
+    "*.tres": "godot-resource",
+    "*.gdshader": "gdshader"
+  },
+
+  // Editor Formatting (Godot uses tabs by default)
+  "editor.tabSize": 4,
+  "editor.insertSpaces": false,
+  "editor.detectIndentation": false,
+  "[gdscript]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": false
+  },
+
+  // Copilot Settings for Godot
+  "github.copilot.enable": {
+    "*": true,
+    "gdscript": true
+  }
+}
