@@ -1,9 +1,10 @@
-[gd_scene load_steps=11 format=3 uid="uid://bgjs7cfay65c2"]
+[gd_scene load_steps=12 format=3 uid="uid://bgjs7cfay65c2"]
 
 [ext_resource type="PackedScene" uid="uid://bknmich6p0hft" path="res://player.tscn" id="2_0xm2m"]
 [ext_resource type="Script" uid="uid://bd046eokvcnu2" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="2_1bvp3"]
 [ext_resource type="Script" uid="uid://csjccrhj5wnx7" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="2_h2yge"]
 [ext_resource type="Script" uid="uid://8umksf8e80fw" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="3_1bvp3"]
+[ext_resource type="Script" uid="uid://djs5e7lkbo60e" path="res://scripts/procedural_map.gd" id="7_5vw27"]
 [ext_resource type="PackedScene" uid="uid://cbtsfodktiu7k" path="res://playable_fatman.tscn" id="7_272bh"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_as1t3"]
@@ -41,7 +42,7 @@ shadow_normal_bias = 3.298
 shadow_opacity = 0.89
 
 [node name="Floor" type="CSGBox3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.040572166, -0.0036082268, 0.010953903)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.06751084, -0.019247532, 0.03777933)
 use_collision = true
 size = Vector3(4000, 0.01, 4000)
 material = SubResource("StandardMaterial3D_1bvp3")
@@ -74,3 +75,6 @@ follow_distance = 3.65
 spring_length = 3.65
 look_at_offset = Vector3(0, 1.5, 0)
 _preview_noise = false
+
+[node name="Procedural Map" type="Node3D" parent="."]
+script = ExtResource("7_5vw27")
