@@ -1,11 +1,11 @@
-[gd_scene load_steps=12 format=3 uid="uid://bgjs7cfay65c2"]
+[gd_scene load_steps=11 format=3 uid="uid://bgjs7cfay65c2"]
 
 [ext_resource type="PackedScene" uid="uid://bknmich6p0hft" path="res://player.tscn" id="2_0xm2m"]
 [ext_resource type="Script" uid="uid://bd046eokvcnu2" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="2_1bvp3"]
 [ext_resource type="Script" uid="uid://csjccrhj5wnx7" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="2_h2yge"]
 [ext_resource type="Script" uid="uid://8umksf8e80fw" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="3_1bvp3"]
 [ext_resource type="Script" uid="uid://djs5e7lkbo60e" path="res://scripts/procedural_map.gd" id="7_5vw27"]
-[ext_resource type="PackedScene" uid="uid://cbtsfodktiu7k" path="res://playable_fatman.tscn" id="7_272bh"]
+[ext_resource type="Script" uid="uid://lvdibt8falnc" path="res://scripts/Minimap.gd" id="8_minimap"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_as1t3"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
@@ -20,17 +20,10 @@ sky = SubResource("Sky_744mi")
 tonemap_mode = 2
 glow_enabled = true
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1bvp3"]
-albedo_color = Color(0, 0.50828844, 0.80689526, 1)
-subsurf_scatter_enabled = true
-
 [sub_resource type="Resource" id="Resource_lquwl"]
 script = ExtResource("3_1bvp3")
 
 [node name="Main" type="Node3D"]
-
-[node name="fatman" parent="." instance=ExtResource("7_272bh")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0)
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_c5lsl")
@@ -41,14 +34,8 @@ shadow_enabled = true
 shadow_normal_bias = 3.298
 shadow_opacity = 0.89
 
-[node name="Floor" type="CSGBox3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.06751084, -0.019247532, 0.03777933)
-use_collision = true
-size = Vector3(4000, 0.01, 4000)
-material = SubResource("StandardMaterial3D_1bvp3")
-
 [node name="Player" parent="." instance=ExtResource("2_0xm2m")]
-transform = Transform3D(0.9999847, 0, -0.005532665, 0, 1, 0, 0.005532665, 0, 0.9999847, -2.9866254, 0, -0.06919098)
+transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -2.9866254, 0, -0.06919098)
 
 [node name="Camera3D" type="Camera3D" parent="."]
 physics_interpolation_mode = 1
@@ -78,3 +65,11 @@ _preview_noise = false
 
 [node name="Procedural Map" type="Node3D" parent="."]
 script = ExtResource("7_5vw27")
+random_seed = 11670
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Minimap" type="Control" parent="HUD"]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("8_minimap")

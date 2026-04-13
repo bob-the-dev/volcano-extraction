@@ -3,7 +3,7 @@
 [resource]
 diffuse_mode = 3
 specular_mode = 1
-albedo_color = Color(1, 0.3254902, 1, 1)
+albedo_color = Color(0, 0, 0, 1)
 emission = Color(0.13784115, 0, 0, 1)
 emission_energy_multiplier = 3.5
 emission_operator = 1

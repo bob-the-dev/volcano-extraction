@@ -11,6 +11,12 @@ extends CharacterBody3D
 ## Show debug visualization
 @export var debug_movement : bool = true
 
+@export_group("Movement Physics")
+## Maximum height the player can step up automatically (in units)
+@export var step_height : float = 0.3
+## How long to snap to floor when going down slopes
+@export var floor_snap : float = 0.1
+
 @export_group("Input Actions")
 ## Name of Input Action to move Left.
 @export var input_left : String = "move_left"
@@ -34,6 +40,13 @@ var _target_position: Vector3
 var _has_target: bool = false
 
 func _ready() -> void:
+	# Add to player group for easy lookup
+	add_to_group("player")
+	
+	# Enable step-up for small ledges
+	floor_stop_on_slope = false
+	floor_snap_length = floor_snap
+	
 	var idle = animation_player.get_animation('idle')
 	idle.loop_mode = Animation.LOOP_LINEAR
 	animation_player.play('idle')
@@ -60,8 +73,18 @@ func _physics_process(delta: float) -> void:
 	else:
 		_handle_direct_input(delta)
 	
+	# Store state before moving
+	var was_on_floor := is_on_floor()
+	var horizontal_velocity := Vector2(velocity.x, velocity.z).length()
+	
 	# Move and slide
 	move_and_slide()
+	
+	# Step-up assist: if on floor, trying to move, but hit a wall, boost upward
+	if was_on_floor and is_on_wall() and horizontal_velocity > 0.1:
+		# Apply upward boost to climb small ledges
+		velocity.y = step_height * 10.0
+		move_and_slide()
 
 
 ## Handle traditional WASD-style input

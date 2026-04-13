@@ -379,7 +379,7 @@ func _generate_collision(mesh_node: MeshInstance3D, collision_node: CollisionSha
 			if Engine.is_editor_hint() and get_tree() and get_tree().edited_scene_root:
 				if collision_node.owner != get_tree().edited_scene_root:
 					collision_node.owner = get_tree().edited_scene_root
-			print("ProceduralWall: Collision shape updated successfully")
+			# print("ProceduralWall: Collision shape updated successfully")  # Commented out to reduce spam
 		else:
 			push_error("ProceduralWall: Failed to create trimesh shape from mesh!")
 	else:
