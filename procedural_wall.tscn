@@ -1,0 +1,12 @@
+[gd_scene load_steps=3 format=3 uid="uid://dimwas82q327p"]
+
+[ext_resource type="Script" path="res://scripts/procedural_wall.gd" id="1_procedural"]
+[ext_resource type="Material" uid="uid://dr2bsrfm3wjta" path="res://materials/wall.tres" id="2_wall_material"]
+
+[node name="ProceduralWall" type="StaticBody3D"]
+script = ExtResource("1_procedural")
+
+[node name="Surface" type="MeshInstance3D" parent="."]
+material_override = ExtResource("2_wall_material")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]

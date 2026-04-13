@@ -1,11 +1,15 @@
 extends CharacterBody3D
 
 @onready var animation_player: AnimationPlayer = $AnimationPlayer
+@onready var camera: Camera3D = get_viewport().get_camera_3d()
+
 @export var can_move : bool = true
 @export var has_gravity : bool = true
-@export var can_jump : bool = true
-@export var can_sprint : bool = true
 
+## Enable click-to-move functionality
+@export var click_to_move : bool = true
+## Show debug visualization
+@export var debug_movement : bool = true
 
 @export_group("Input Actions")
 ## Name of Input Action to move Left.
@@ -16,78 +20,144 @@ extends CharacterBody3D
 @export var input_forward : String = "move_up"
 ## Name of Input Action to move Backward.
 @export var input_back : String = "move_down"
-## Name of Input Action to Jump.
-@export var input_jump : String = "jump"
-## Name of Input Action to Sprint.
-@export var input_sprint : String = "sprint"
 
 @export_group("Speeds")
 ## Move speed.
 @export var move_speed : float = 2.0
-## Normal speed.
-@export var base_speed : float = 2.0
-## Speed of jump.
-@export var jump_velocity : float = 4.5
-## How fast do we run?
-@export var sprint_speed : float = 4.0
 ## How fast the character rotates to face movement direction.
 @export var rotation_speed : float = 10.0
+## How close to target before stopping
+@export var arrival_distance : float = 0.3
+
+# Click-to-move variables
+var _target_position: Vector3
+var _has_target: bool = false
 
 func _ready() -> void:
-	#animation_player.play('idle')
 	var idle = animation_player.get_animation('idle')
 	idle.loop_mode = Animation.LOOP_LINEAR
 	animation_player.play('idle')
-	pass
+
+
+func _input(event: InputEvent) -> void:
+	if not click_to_move or not can_move:
+		return
+	
+	# Handle mouse click for movement
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			_handle_click(event.position)
+
 
 func _physics_process(delta: float) -> void:
-	
-	if velocity.y != 0:
-		animation_player.play('jump')
-	#if is_on_floor() :
-		#animation_player.play("idle")
-		
+	# Apply gravity
+	if has_gravity and not is_on_floor():
+		velocity += get_gravity() * delta
 
-	
-	# Apply gravity to velocity
-	if has_gravity:
-		if not is_on_floor():
-			velocity += get_gravity() * delta
-
-	# Apply jumping
-	if can_jump:
-		if Input.is_action_just_pressed(input_jump) and is_on_floor():
-			velocity.y = jump_velocity
-
-	# Modify speed based on sprinting
-	if can_sprint and Input.is_action_pressed(input_sprint):
-			move_speed = sprint_speed
+	# Handle movement
+	if click_to_move:
+		_handle_click_to_move(delta)
 	else:
-		move_speed = base_speed
+		_handle_direct_input(delta)
+	
+	# Move and slide
+	move_and_slide()
 
-	# Apply desired movement to velocity
-	if can_move:
-		var input_dir := Input.get_vector(input_left, input_right, input_forward, input_back)
-		if input_dir.length() != 0:
-			if animation_player.current_animation != 'walk':
-				animation_player.play('walk')
-			# Use world-space movement (orthogonal)
-			velocity.x = input_dir.x * move_speed
-			velocity.z = input_dir.y * move_speed
-			
-			# Rotate character to face movement direction
-			var target_rotation := atan2(input_dir.x, input_dir.y)
-			rotation.y = lerp_angle(rotation.y, target_rotation, rotation_speed * delta)
-		else:
-			# Smoothly stop when no input
-			velocity.x = move_toward(velocity.x, 0, move_speed)
-			velocity.z = move_toward(velocity.z, 0, move_speed)
-			if animation_player.current_animation == 'walk':
-				animation_player.play('idle')
-	else:
+
+## Handle traditional WASD-style input
+func _handle_direct_input(delta: float) -> void:
+	if not can_move:
 		velocity.x = 0
 		velocity.z = 0
+		return
 	
-	# Use velocity to actually move
+	var input_dir := Input.get_vector(input_left, input_right, input_forward, input_back)
+	
+	if input_dir.length() > 0:
+		# Move in input direction
+		velocity.x = input_dir.x * move_speed
+		velocity.z = input_dir.y * move_speed
+		
+		# Rotate to face direction
+		var target_rotation := atan2(input_dir.x, input_dir.y)
+		rotation.y = lerp_angle(rotation.y, target_rotation, rotation_speed * delta)
+		
+		# Play walk animation
+		if animation_player.current_animation != 'walk':
+			animation_player.play('walk')
+	else:
+		# Stop moving
+		velocity.x = move_toward(velocity.x, 0, move_speed)
+		velocity.z = move_toward(velocity.z, 0, move_speed)
+		
+		if animation_player.current_animation == 'walk':
+			animation_player.play('idle')
 
-	move_and_slide()
+
+## Handle click-to-move
+func _handle_click_to_move(delta: float) -> void:
+	if not can_move or not _has_target:
+		velocity.x = move_toward(velocity.x, 0, move_speed)
+		velocity.z = move_toward(velocity.z, 0, move_speed)
+		if animation_player.current_animation == 'walk':
+			animation_player.play('idle')
+		return
+	
+	# Calculate direction to target (only XZ plane)
+	var target_pos_2d := Vector2(_target_position.x, _target_position.z)
+	var current_pos_2d := Vector2(global_position.x, global_position.z)
+	var distance := current_pos_2d.distance_to(target_pos_2d)
+	
+	# Check if we've arrived
+	if distance < arrival_distance:
+		_has_target = false
+		velocity.x = move_toward(velocity.x, 0, move_speed)
+		velocity.z = move_toward(velocity.z, 0, move_speed)
+		if animation_player.current_animation == 'walk':
+			animation_player.play('idle')
+		if debug_movement:
+			print("Arrived at target!")
+		return
+	
+	# Move toward target
+	var direction_2d := (target_pos_2d - current_pos_2d).normalized()
+	velocity.x = direction_2d.x * move_speed
+	velocity.z = direction_2d.y * move_speed
+	
+	# Rotate to face target
+	var target_rotation := atan2(direction_2d.x, direction_2d.y)
+	rotation.y = lerp_angle(rotation.y, target_rotation, rotation_speed * delta)
+	
+	# Play walk animation
+	if animation_player.current_animation != 'walk':
+		animation_player.play('walk')
+
+
+## Handle mouse click raycast
+func _handle_click(screen_position: Vector2) -> void:
+	if not camera:
+		camera = get_viewport().get_camera_3d()
+	
+	if not camera:
+		print("ERROR: No camera found!")
+		return
+	
+	# Raycast from camera
+	var from: Vector3 = camera.project_ray_origin(screen_position)
+	var to: Vector3 = from + camera.project_ray_normal(screen_position) * 1000.0
+	
+	var space_state := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.collide_with_areas = false
+	
+	var result := space_state.intersect_ray(query)
+	
+	if result:
+		_target_position = result.position
+		_has_target = true
+		
+		if debug_movement:
+			print("Moving to: ", _target_position)
+	else:
+		if debug_movement:
+			print("Click didn't hit anything")

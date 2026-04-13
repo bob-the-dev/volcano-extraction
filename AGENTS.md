@@ -13,6 +13,7 @@
 **Status:** Rigging fatman character in Blender (March 15, 2026)
 
 **Completed Phases:**
+
 - ✅ Phase 1: Preparation & Understanding
   - Downloaded Mixamo Y Bot reference rig (y_bot.fbx)
   - Understood current character structure (Skin modifier ≠ rigging)
@@ -20,12 +21,14 @@
   - Fixed mirror modifier issues on fatman character
 
 **Next Step:**
+
 - 📍 **Phase 2, Step 2.1:** Import Mixamo FBX into new Blender file to study bone structure
   - Location: `blender/mixamo_reference/y_bot.fbx`
   - Action: File → Import → FBX in new Blender window
   - Goal: Study professional bone hierarchy for manual rig creation
 
 **Remaining Phases:**
+
 - Phase 2 (remainder): Study Mixamo bone structure and hierarchy
 - Phase 3: Create custom armature for fatman (spine chain + arms + 4-finger hands)
 - Phase 4: Weight painting (parent mesh to armature)
@@ -36,6 +39,7 @@
 **Reference:** Full detailed plan saved in `/memories/session/plan.md`
 
 **Working Files:**
+
 - `blender/fatman.blend` - Character mesh (ready for rigging)
 - `blender/mixamo_reference/y_bot.fbx` - Bone structure reference
 - `playable_fatman.tscn` - Godot scene (will update with rigged version)
@@ -229,6 +233,11 @@ func _physics_process(delta: float) -> void:
 - Use `assert()` for development-time checks
 - Test in both editor and standalone builds
 - Check console for errors and warnings
+
+## Off limits
+
+- Do not ever update content in addons, as long as you are not instructed to do so.
+- Updating .tscn while godot is running is a no go, as long as you are not instructed to do so, as it seems the editor will automatically override most of the changes.
 
 ## Version Control
 
