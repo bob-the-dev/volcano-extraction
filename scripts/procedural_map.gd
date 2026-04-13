@@ -269,11 +269,29 @@ func _spawn_wall(pos: Vector3) -> void:
 	wall.position = pos
 	
 	# Randomize wall parameters
-	wall.base_height = _rng.randf_range(0.5, 2.0)
-	wall.corner_nw_offset = _rng.randf_range(-0.5, 1.0)
-	wall.corner_ne_offset = _rng.randf_range(-0.5, 1.0)
-	wall.corner_sw_offset = _rng.randf_range(-0.5, 1.0)
-	wall.corner_se_offset = _rng.randf_range(-0.5, 1.0)
+	wall.base_height = _rng.randf_range(0.5, 1.0)
+	wall.corner_nw_offset = _rng.randf_range(-0.2, 0.4)
+	wall.corner_ne_offset = _rng.randf_range(-0.2, 0.4)
+	wall.corner_sw_offset = _rng.randf_range(-0.2, 0.4)
+	wall.corner_se_offset = _rng.randf_range(-0.2, 0.4)
+	
+	# Randomize pillar base radii (0.5 to 1.0)
+	wall.corner_nw_base_radius = _rng.randf_range(0.5, 1.0)
+	wall.corner_ne_base_radius = _rng.randf_range(0.5, 1.0)
+	wall.corner_sw_base_radius = _rng.randf_range(0.5, 1.0)
+	wall.corner_se_base_radius = _rng.randf_range(0.5, 1.0)
+	
+	# Randomize pillar top radii (0.2 to 0.8, always smaller than base)
+	wall.corner_nw_top_radius = minf(_rng.randf_range(0.2, 0.8), wall.corner_nw_base_radius)
+	wall.corner_ne_top_radius = minf(_rng.randf_range(0.2, 0.8), wall.corner_ne_base_radius)
+	wall.corner_sw_top_radius = minf(_rng.randf_range(0.2, 0.8), wall.corner_sw_base_radius)
+	wall.corner_se_top_radius = minf(_rng.randf_range(0.2, 0.8), wall.corner_se_base_radius)
+	
+	# Randomize pillar top insets for slant (-0.3 to 0.3)
+	wall.corner_nw_top_inset = _rng.randf_range(-0.3, 0.3)
+	wall.corner_ne_top_inset = _rng.randf_range(-0.3, 0.3)
+	wall.corner_sw_top_inset = _rng.randf_range(-0.3, 0.3)
+	wall.corner_se_top_inset = _rng.randf_range(-0.3, 0.3)
 	
 	if wall.has_method("_regenerate"):
 		wall.call("_regenerate")
@@ -398,4 +416,3 @@ func _constrain(value: float, min_val: float, max_val: float) -> float:
 ## Public getter for cells array (used by minimap).
 func get_cells() -> Array:
 	return _cells
-

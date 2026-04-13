@@ -1,6 +1,5 @@
-[gd_scene load_steps=35 format=4 uid="uid://bknmich6p0hft"]
+[gd_scene load_steps=34 format=4 uid="uid://bknmich6p0hft"]
 
-[ext_resource type="Material" uid="uid://biybxgkfs43k2" path="res://materials/outline.tres" id="2_hqtel"]
 [ext_resource type="Script" uid="uid://fungybo3qrvq" path="res://scripts/Player.gd" id="2_i3pqv"]
 [ext_resource type="Material" uid="uid://dtl6lm3bevic7" path="res://materials/player.tres" id="3_i3pqv"]
 
@@ -2194,12 +2193,12 @@ bones/6/rotation = Quaternion(-4.440892e-15, -1.5506867e-09, -5.2939556e-23, 1)
 bones/6/scale = Vector3(1, 1, 1)
 
 [node name="body-mesh" type="MeshInstance3D" parent="character-human/Skeleton3D"]
-material_overlay = ExtResource("2_hqtel")
+material_override = ExtResource("3_i3pqv")
 mesh = SubResource("ArrayMesh_ahxd8")
 skin = SubResource("Skin_d8d7d")
 
 [node name="head-mesh" type="MeshInstance3D" parent="character-human/Skeleton3D"]
-material_overlay = ExtResource("2_hqtel")
+material_override = ExtResource("3_i3pqv")
 mesh = SubResource("ArrayMesh_4mywg")
 skin = SubResource("Skin_d8d7d")
 

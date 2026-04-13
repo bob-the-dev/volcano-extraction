@@ -29,7 +29,7 @@ extends CharacterBody3D
 
 @export_group("Speeds")
 ## Move speed.
-@export var move_speed : float = 2.0
+@export var move_speed : float = 4.0
 ## How fast the character rotates to face movement direction.
 @export var rotation_speed : float = 10.0
 ## How close to target before stopping

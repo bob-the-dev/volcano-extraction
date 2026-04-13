@@ -1,9 +1,10 @@
 [gd_resource type="StandardMaterial3D" format=3 uid="uid://dtl6lm3bevic7"]
 
 [resource]
-diffuse_mode = 3
-specular_mode = 1
-albedo_color = Color(0, 0, 0, 1)
+albedo_color = Color(0.85247463, 0.61528474, 0.66910774, 1)
+metallic = 0.68
+metallic_specular = 0.15
+roughness = 0.57
 emission = Color(0.13784115, 0, 0, 1)
 emission_energy_multiplier = 3.5
 emission_operator = 1
