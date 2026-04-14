@@ -65,10 +65,10 @@ func _generate_minimap() -> void:
 	if not _procedural_map:
 		return
 	
-	# Get map properties
-	var map_width: float = _procedural_map.map_width
-	var map_height: float = _procedural_map.map_height
-	var cell_size: float = _procedural_map.cell_size
+	# Get map properties (using get() for dynamic access)
+	var map_width: float = _procedural_map.get("map_width")
+	var map_height: float = _procedural_map.get("map_height")
+	var cell_size: float = _procedural_map.get("cell_size")
 	
 	# Calculate grid dimensions
 	var grid_w := int(floor(map_width / cell_size)) - 4
@@ -84,8 +84,8 @@ func _generate_minimap() -> void:
 		"height": grid_h * cell_size
 	}
 	
-	# Create image
-	_minimap_image = Image.create(grid_w, grid_h, false, Image.FORMAT_RGB8)
+	# Create image with alpha channel to support transparency
+	_minimap_image = Image.create(grid_w, grid_h, false, Image.FORMAT_RGBA8)
 	_minimap_image.fill(background_color)
 	
 	# Get cells from procedural map

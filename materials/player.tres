@@ -1,16 +1,13 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://dtl6lm3bevic7"]
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://cu0cc4f3182h3"]
 
 [resource]
-albedo_color = Color(0.85247463, 0.61528474, 0.66910774, 1)
-metallic = 0.68
-metallic_specular = 0.15
-roughness = 0.57
-emission = Color(0.13784115, 0, 0, 1)
-emission_energy_multiplier = 3.5
-emission_operator = 1
-normal_scale = 0.74
-rim_tint = 0.0
-clearcoat = 0.78
-clearcoat_roughness = 0.12
-refraction_scale = 0.42
-grow_amount = 0.01
+shading_mode = 2
+diffuse_mode = 3
+specular_mode = 1
+albedo_color = Color(0, 0, 0, 1)
+metallic_specular = 0.0
+roughness = 0.0
+emission = Color(0.99726206, 0.994286, 1, 1)
+emission_energy_multiplier = 0.27
+refraction_enabled = true
+refraction_scale = 0.5

@@ -1,14 +1,14 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://dr2bsrfm3wjta"]
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://ds335gqf6clh6"]
 
 [resource]
 shading_mode = 2
 diffuse_mode = 3
 specular_mode = 1
-albedo_color = Color(0.46421015, 0.18448496, 0, 1)
+albedo_color = Color(0.2600971, 0.1895034, 0.01541948, 1)
 metallic_specular = 0.0
 roughness = 0.0
 emission_enabled = true
-emission = Color(0.676924, 0, 0.0835629, 1)
+emission = Color(0.84382766, 0.64462894, 0.5593692, 1)
 emission_energy_multiplier = 0.27
 refraction_enabled = true
 refraction_scale = 0.5

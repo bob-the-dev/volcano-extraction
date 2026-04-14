@@ -69,3 +69,7 @@ freefly={
 
 3d/physics_engine="Jolt Physics"
 common/physics_interpolation=true
+
+[rendering]
+
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)
