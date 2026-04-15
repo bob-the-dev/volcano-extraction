@@ -67,89 +67,42 @@ func _regenerate() -> void:
 	_is_regenerating = false
 
 
-## Generates the floor tile mesh with rounded corners.
+## Generates the floor tile mesh with rounded corners using clean extrusion.
 func _generate_floor_tile(mesh_node: MeshInstance3D) -> void:
 	var surface_tool := SurfaceTool.new()
 	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 	
 	# Calculate dimensions
-	var half_size := tile_size * 0.5
-	var inset := corner_radius
 	var y_bottom := 0.0
 	var y_top := tile_height
 	
-	# Create main quad (center rectangle minus corners)
-	# We'll create 5 sections: center + 4 corner areas
+	# Generate perimeter points of the rounded rectangle
+	var perimeter := _generate_rounded_rect_perimeter()
 	
-	# Center rectangle (full tile minus corners)
-	_add_rectangle_top_bottom(surface_tool, 
-		Vector2(-half_size + inset, -half_size + inset),
-		Vector2(half_size - inset, half_size - inset),
-		y_top, y_bottom)
+	# Triangulate top face
+	_triangulate_rounded_rect(surface_tool, perimeter, y_top, false)
 	
-	# Four corner rectangles (connecting center to rounded corners)
-	# Top edge - add only north side face
-	_add_rectangle_with_sides(surface_tool,
-		Vector2(-half_size + inset, -half_size),
-		Vector2(half_size - inset, -half_size + inset),
-		y_top, y_bottom, true, false, false, false)  # North only
+	# Triangulate bottom face (reversed winding)
+	_triangulate_rounded_rect(surface_tool, perimeter, y_bottom, true)
 	
-	# Bottom edge - add only south side face
-	_add_rectangle_with_sides(surface_tool,
-		Vector2(-half_size + inset, half_size - inset),
-		Vector2(half_size - inset, half_size),
-		y_top, y_bottom, false, true, false, false)  # South only
-	
-	# Left edge - add only west side face
-	_add_rectangle_with_sides(surface_tool,
-		Vector2(-half_size, -half_size + inset),
-		Vector2(-half_size + inset, half_size - inset),
-		y_top, y_bottom, false, false, true, false)  # West only
-	
-	# Right edge - add only east side face
-	_add_rectangle_with_sides(surface_tool,
-		Vector2(half_size - inset, -half_size + inset),
-		Vector2(half_size, half_size - inset),
-		y_top, y_bottom, false, false, false, true)  # East only
-	
-	# Four rounded corners
-	_add_rounded_corner(surface_tool, Vector2(-half_size + inset, -half_size + inset), PI, y_top, y_bottom)      # Top-left
-	_add_rounded_corner(surface_tool, Vector2(half_size - inset, -half_size + inset), PI * 1.5, y_top, y_bottom) # Top-right
-	_add_rounded_corner(surface_tool, Vector2(half_size - inset, half_size - inset), 0.0, y_top, y_bottom)       # Bottom-right
-	_add_rounded_corner(surface_tool, Vector2(-half_size + inset, half_size - inset), PI * 0.5, y_top, y_bottom) # Bottom-left
-	
-	# Add connecting side faces between straight edges and rounded corners
-	# Top-left corner connections
-	_add_vertical_face(surface_tool, 
-		Vector2(-half_size + inset, -half_size), 
-		Vector2(-half_size + inset, -half_size + inset), y_top, y_bottom)  # Connects top edge to top-left corner
-	_add_vertical_face(surface_tool,
-		Vector2(-half_size, -half_size + inset),
-		Vector2(-half_size + inset, -half_size + inset), y_top, y_bottom)  # Connects left edge to top-left corner
-	
-	# Top-right corner connections
-	_add_vertical_face(surface_tool,
-		Vector2(half_size - inset, -half_size + inset),
-		Vector2(half_size - inset, -half_size), y_top, y_bottom)  # Connects top-right corner to top edge
-	_add_vertical_face(surface_tool,
-		Vector2(half_size - inset, -half_size + inset),
-		Vector2(half_size, -half_size + inset), y_top, y_bottom)  # Connects top-right corner to right edge
-	
-	# Bottom-right corner connections
-	_add_vertical_face(surface_tool,
-		Vector2(half_size, half_size - inset),
-		Vector2(half_size - inset, half_size - inset), y_top, y_bottom)  # Connects right edge to bottom-right corner
-	_add_vertical_face(surface_tool,
-		Vector2(half_size - inset, half_size - inset),
-		Vector2(half_size - inset, half_size), y_top, y_bottom)  # Connects bottom-right corner to bottom edge
-	
-	# Bottom-left corner connections
-	_add_vertical_face(surface_tool,
-		Vector2(-half_size + inset, half_size - inset),
-		Vector2(-half_size + inset, half_size), y_top, y_bottom)  # Connects bottom-left corner to bottom edge
-	_add_vertical_face(surface_tool,
-		Vector2(-half_size + inset, half_size - inset),
-		Vector2(-half_size, half_size - inset), y_top, y_bottom)  # Connects left edge to bottom-left corner
+	# Generate side walls by connecting perimeter points
+	for i in range(perimeter.size()):
+		var p1 := perimeter[i]
+		var p2 := perimeter[(i + 1) % perimeter.size()]
+		
+		var p1_top := Vector3(p1.x, y_top, p1.y)
+		var p2_top := Vector3(p2.x, y_top, p2.y)
+		var p1_btm := Vector3(p1.x, y_bottom, p1.y)
+		var p2_btm := Vector3(p2.x, y_bottom, p2.y)
+		
+		# Add quad as 2 triangles (outward facing)
+		surface_tool.add_vertex(p1_top)
+		surface_tool.add_vertex(p2_top)
+		surface_tool.add_vertex(p1_btm)
+		
+		surface_tool.add_vertex(p1_btm)
+		surface_tool.add_vertex(p2_top)
+		surface_tool.add_vertex(p2_btm)
 	
 	# Generate normals and commit
 	surface_tool.generate_normals()
@@ -157,149 +110,86 @@ func _generate_floor_tile(mesh_node: MeshInstance3D) -> void:
 	mesh_node.mesh = array_mesh
 
 
-## Adds a rectangular section with only top and bottom faces.
-func _add_rectangle_top_bottom(surface_tool: SurfaceTool, min_corner: Vector2, max_corner: Vector2, y_top: float, y_bottom: float) -> void:
-	# Top face
-	var nw_top := Vector3(min_corner.x, y_top, min_corner.y)
-	var ne_top := Vector3(max_corner.x, y_top, min_corner.y)
-	var sw_top := Vector3(min_corner.x, y_top, max_corner.y)
-	var se_top := Vector3(max_corner.x, y_top, max_corner.y)
+## Generates the perimeter vertices of a rounded rectangle (clockwise).
+func _generate_rounded_rect_perimeter() -> Array[Vector2]:
+	var perimeter: Array[Vector2] = []
+	var half_size := tile_size * 0.5
+	var inset := corner_radius
 	
-	surface_tool.add_vertex(nw_top)
-	surface_tool.add_vertex(ne_top)
-	surface_tool.add_vertex(sw_top)
+	# Corner centers
+	var tl_center := Vector2(-half_size + inset, -half_size + inset)  # Top-left
+	var tr_center := Vector2(half_size - inset, -half_size + inset)   # Top-right
+	var br_center := Vector2(half_size - inset, half_size - inset)    # Bottom-right
+	var bl_center := Vector2(-half_size + inset, half_size - inset)   # Bottom-left
 	
-	surface_tool.add_vertex(sw_top)
-	surface_tool.add_vertex(ne_top)
-	surface_tool.add_vertex(se_top)
-	
-	# Bottom face (reversed winding)
-	var nw_btm := Vector3(min_corner.x, y_bottom, min_corner.y)
-	var ne_btm := Vector3(max_corner.x, y_bottom, min_corner.y)
-	var sw_btm := Vector3(min_corner.x, y_bottom, max_corner.y)
-	var se_btm := Vector3(max_corner.x, y_bottom, max_corner.y)
-	
-	surface_tool.add_vertex(nw_btm)
-	surface_tool.add_vertex(sw_btm)
-	surface_tool.add_vertex(ne_btm)
-	
-	surface_tool.add_vertex(ne_btm)
-	surface_tool.add_vertex(sw_btm)
-	surface_tool.add_vertex(se_btm)
-
-
-## Adds a rectangular section with selective side faces.
-func _add_rectangle_with_sides(surface_tool: SurfaceTool, min_corner: Vector2, max_corner: Vector2, y_top: float, y_bottom: float, 
-								add_north: bool, add_south: bool, add_west: bool, add_east: bool) -> void:
-	# Add top and bottom first
-	_add_rectangle_top_bottom(surface_tool, min_corner, max_corner, y_top, y_bottom)
-	
-	# Add only requested side faces
-	var nw_top := Vector3(min_corner.x, y_top, min_corner.y)
-	var ne_top := Vector3(max_corner.x, y_top, min_corner.y)
-	var sw_top := Vector3(min_corner.x, y_top, max_corner.y)
-	var se_top := Vector3(max_corner.x, y_top, max_corner.y)
-	
-	var nw_btm := Vector3(min_corner.x, y_bottom, min_corner.y)
-	var ne_btm := Vector3(max_corner.x, y_bottom, min_corner.y)
-	var sw_btm := Vector3(min_corner.x, y_bottom, max_corner.y)
-	var se_btm := Vector3(max_corner.x, y_bottom, max_corner.y)
-	
-	if add_north:
-		# North face
-		surface_tool.add_vertex(nw_top)
-		surface_tool.add_vertex(ne_top)
-		surface_tool.add_vertex(nw_btm)
-		
-		surface_tool.add_vertex(nw_btm)
-		surface_tool.add_vertex(ne_top)
-		surface_tool.add_vertex(ne_btm)
-	
-	if add_south:
-		# South face
-		surface_tool.add_vertex(se_top)
-		surface_tool.add_vertex(sw_top)
-		surface_tool.add_vertex(se_btm)
-		
-		surface_tool.add_vertex(se_btm)
-		surface_tool.add_vertex(sw_top)
-		surface_tool.add_vertex(sw_btm)
-	
-	if add_west:
-		# West face
-		surface_tool.add_vertex(sw_top)
-		surface_tool.add_vertex(nw_top)
-		surface_tool.add_vertex(sw_btm)
-		
-		surface_tool.add_vertex(sw_btm)
-		surface_tool.add_vertex(nw_top)
-		surface_tool.add_vertex(nw_btm)
-	
-	if add_east:
-		# East face
-		surface_tool.add_vertex(ne_top)
-		surface_tool.add_vertex(se_top)
-		surface_tool.add_vertex(ne_btm)
-		
-		surface_tool.add_vertex(ne_btm)
-		surface_tool.add_vertex(se_top)
-		surface_tool.add_vertex(se_btm)
-
-
-## Adds a rounded corner section.
-func _add_rounded_corner(surface_tool: SurfaceTool, center: Vector2, start_angle: float, y_top: float, y_bottom: float) -> void:
 	var angle_step := (PI * 0.5) / corner_segments
 	
-	for i in range(corner_segments):
-		var angle1 := start_angle + (i * angle_step)
-		var angle2 := start_angle + ((i + 1) * angle_step)
-		
-		var p1 := center + Vector2(cos(angle1), sin(angle1)) * corner_radius
-		var p2 := center + Vector2(cos(angle2), sin(angle2)) * corner_radius
-		
-		# Top face triangle
-		var center_top := Vector3(center.x, y_top, center.y)
-		var p1_top := Vector3(p1.x, y_top, p1.y)
-		var p2_top := Vector3(p2.x, y_top, p2.y)
-		
-		surface_tool.add_vertex(center_top)
-		surface_tool.add_vertex(p1_top)
-		surface_tool.add_vertex(p2_top)
-		
-		# Bottom face triangle (reversed)
-		var center_btm := Vector3(center.x, y_bottom, center.y)
-		var p1_btm := Vector3(p1.x, y_bottom, p1.y)
-		var p2_btm := Vector3(p2.x, y_bottom, p2.y)
-		
-		surface_tool.add_vertex(center_btm)
-		surface_tool.add_vertex(p2_btm)
-		surface_tool.add_vertex(p1_btm)
-		
-		# Curved side face (quad as 2 triangles)
-		surface_tool.add_vertex(p1_top)
-		surface_tool.add_vertex(p2_top)
-		surface_tool.add_vertex(p1_btm)
-		
-		surface_tool.add_vertex(p1_btm)
-		surface_tool.add_vertex(p2_top)
-		surface_tool.add_vertex(p2_btm)
+	# Trace perimeter clockwise starting from top-left corner end
+	# Top edge (left to right)
+	perimeter.append(Vector2(-half_size + inset, -half_size))
+	perimeter.append(Vector2(half_size - inset, -half_size))
+	
+	# Top-right corner arc (start angle: -PI/2, end angle: 0)
+	for i in range(1, corner_segments + 1):
+		var angle := -PI * 0.5 + (i * angle_step)
+		var point := tr_center + Vector2(cos(angle), sin(angle)) * corner_radius
+		perimeter.append(point)
+	
+	# Right edge (top to bottom)
+	perimeter.append(Vector2(half_size, half_size - inset))
+	
+	# Bottom-right corner arc (start angle: 0, end angle: PI/2)
+	for i in range(1, corner_segments + 1):
+		var angle := 0.0 + (i * angle_step)
+		var point := br_center + Vector2(cos(angle), sin(angle)) * corner_radius
+		perimeter.append(point)
+	
+	# Bottom edge (right to left)
+	perimeter.append(Vector2(-half_size + inset, half_size))
+	
+	# Bottom-left corner arc (start angle: PI/2, end angle: PI)
+	for i in range(1, corner_segments + 1):
+		var angle := PI * 0.5 + (i * angle_step)
+		var point := bl_center + Vector2(cos(angle), sin(angle)) * corner_radius
+		perimeter.append(point)
+	
+	# Left edge (bottom to top)
+	perimeter.append(Vector2(-half_size, -half_size + inset))
+	
+	# Top-left corner arc (start angle: PI, end angle: 3*PI/2)
+	for i in range(1, corner_segments + 1):
+		var angle := PI + (i * angle_step)
+		var point := tl_center + Vector2(cos(angle), sin(angle)) * corner_radius
+		perimeter.append(point)
+	
+	return perimeter
 
 
-## Adds a vertical face between two 2D points.
-func _add_vertical_face(surface_tool: SurfaceTool, p1: Vector2, p2: Vector2, y_top: float, y_bottom: float) -> void:
-	var p1_top := Vector3(p1.x, y_top, p1.y)
-	var p2_top := Vector3(p2.x, y_top, p2.y)
-	var p1_btm := Vector3(p1.x, y_bottom, p1.y)
-	var p2_btm := Vector3(p2.x, y_bottom, p2.y)
+## Triangulates a rounded rectangle face using fan triangulation from center.
+func _triangulate_rounded_rect(surface_tool: SurfaceTool, perimeter: Array[Vector2], y_level: float, reverse_winding: bool) -> void:
+	# Calculate center point
+	var center := Vector2.ZERO
 	
-	# Quad as 2 triangles
-	surface_tool.add_vertex(p1_top)
-	surface_tool.add_vertex(p2_top)
-	surface_tool.add_vertex(p1_btm)
+	# Use fan triangulation from center
+	var center_3d := Vector3(center.x, y_level, center.y)
 	
-	surface_tool.add_vertex(p1_btm)
-	surface_tool.add_vertex(p2_top)
-	surface_tool.add_vertex(p2_btm)
+	for i in range(perimeter.size()):
+		var p1 := perimeter[i]
+		var p2 := perimeter[(i + 1) % perimeter.size()]
+		
+		var p1_3d := Vector3(p1.x, y_level, p1.y)
+		var p2_3d := Vector3(p2.x, y_level, p2.y)
+		
+		if reverse_winding:
+			# Reverse winding for bottom face (facing down)
+			surface_tool.add_vertex(center_3d)
+			surface_tool.add_vertex(p1_3d)
+			surface_tool.add_vertex(p2_3d)
+		else:
+			# Normal winding for top face (facing up, perimeter is clockwise so reverse)
+			surface_tool.add_vertex(center_3d)
+			surface_tool.add_vertex(p2_3d)
+			surface_tool.add_vertex(p1_3d)
 
 
 ## Generates collision shape from mesh.

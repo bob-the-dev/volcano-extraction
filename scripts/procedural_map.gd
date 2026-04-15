@@ -336,10 +336,10 @@ func _spawn_floor_tile(pos: Vector3) -> void:
 	var floor_tile: StaticBody3D = _floor_tile_scene.instantiate()
 	add_child(floor_tile)
 	floor_tile.add_to_group("floor_tile")
-	floor_tile.position = pos + Vector3(0, floor_height * 0.5, 0)
+	floor_tile.position = pos + Vector3(0, floor_height * 1.5, 0)
 	
 	# Set tile size to match cell size
-	floor_tile.tile_size = cell_size * 0.95
+	floor_tile.tile_size = cell_size * 0.9
 	floor_tile.tile_height = floor_height
 	
 	# Regenerate mesh with new parameters
@@ -438,13 +438,8 @@ func _place_player_on_floor() -> void:
 		push_warning("No floor tiles available to place player!")
 		return
 	
-	# Find player node
-	var player: Node3D = get_tree().get_first_node_in_group("player")
-	if not player:
-		# Try to find by name
-		player = get_node_or_null("../Player")
-		if not player:
-			player = get_node_or_null("../fatman")
+	# Find player node using multiple fallback methods
+	var player: Node3D = NodeUtils.find(self, "player", ["../Player"])
 	
 	if not player:
 		push_warning("Player node not found!")

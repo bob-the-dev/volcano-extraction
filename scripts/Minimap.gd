@@ -33,7 +33,7 @@ func _ready() -> void:
 	add_child(_texture_rect)
 	
 	# Find procedural map and player
-	_procedural_map = get_node_or_null("/root/Main/Procedural Map")
+	_procedural_map = NodeUtils.find(self, "procedural_map", ["/root/Main/Procedural Map"])
 	if not _procedural_map:
 		push_warning("Minimap: ProceduralMap not found!")
 		return

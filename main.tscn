@@ -73,9 +73,7 @@ _preview_noise = false
 
 [node name="Procedural Map" type="Node3D" parent="."]
 script = ExtResource("7_5vw27")
-map_width = 140.0
-map_height = 200.0
-num_rooms = 18
+median_rooms = 20
 random_seed = 11670
 show_grid_debug = false
 

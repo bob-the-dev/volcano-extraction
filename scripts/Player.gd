@@ -91,29 +91,18 @@ func _ready() -> void:
 	# Setup click indicator particle system
 	_setup_click_indicator()
 	
-	# Find procedural map if not set - try multiple methods
+	# Find procedural map if not set - uses multiple fallback methods
 	print("[Player] Looking for procedural map...")
 	if not procedural_map:
-		# Method 1: Try as sibling node (most common in scenes)
-		procedural_map = get_node_or_null("../Procedural Map")
-		if procedural_map:
-			print("[Player] Found procedural map as sibling: ", procedural_map.name)
-		else:
-			# Method 2: Try by group
-			procedural_map = get_tree().get_first_node_in_group("procedural_map")
-			if procedural_map:
-				print("[Player] Found procedural map by group: ", procedural_map.name)
-			else:
-				# Method 3: Search parent's children
-				var parent := get_parent()
-				if parent:
-					for child in parent.get_children():
-						if child.get_script() and child.get_script().resource_path.contains("procedural_map"):
-							procedural_map = child
-							print("[Player] Found procedural map by script search: ", procedural_map.name)
-							break
-				if not procedural_map:
-					print("[Player] WARNING: Could not find procedural map!")
+		procedural_map = NodeUtils.find_node(
+			self,
+			"procedural_map",  # Try group first (fastest)
+			["../Procedural Map"],  # Then try as sibling
+			"procedural_map",  # Finally search by script
+			true  # Enable debug output
+		)
+		if not procedural_map:
+			print("[Player] WARNING: Could not find procedural map!")
 	else:
 		print("[Player] Procedural map already assigned: ", procedural_map.name)
 	
