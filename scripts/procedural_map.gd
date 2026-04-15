@@ -49,6 +49,12 @@ class Cell:
 @export var base_thickness: float = 1.0
 @export var regenerate_on_ready: bool = true
 
+@export_subgroup("Tile Variation")
+## Maximum displacement for tile corners to create irregular shapes.
+@export var tile_corner_displacement: float = 0.08
+## Noise frequency for tile corner variation (higher = more variation, less smoothness).
+@export var tile_variation_frequency: float = 5.0
+
 @export_group("Debug")
 @export var show_grid_debug: bool = true
 @export var grid_line_color: Color = Color(0, 1, 0, 0.5)
@@ -276,7 +282,7 @@ func _spawn_geometry() -> void:
 		if cell.is_wall:
 			_spawn_wall(world_pos)
 		elif cell.is_floor and not cell.is_lava:
-			_spawn_floor_tile(world_pos)
+			_spawn_floor_tile(world_pos, cell.position)
 			_floor_cells.append(cell)
 		elif cell.is_lava:
 			_lava_cells.append(cell)
@@ -329,7 +335,7 @@ func _spawn_wall(pos: Vector3) -> void:
 
 
 ## Spawns a floor tile at given position.
-func _spawn_floor_tile(pos: Vector3) -> void:
+func _spawn_floor_tile(pos: Vector3, grid_pos: Vector2) -> void:
 	if not _floor_tile_scene:
 		return
 	
@@ -342,6 +348,14 @@ func _spawn_floor_tile(pos: Vector3) -> void:
 	floor_tile.tile_size = cell_size * 0.9
 	floor_tile.tile_height = floor_height
 	
+	# Apply corner displacement based on grid position
+	if tile_corner_displacement > 0.0:
+		var corner_offsets := _calculate_tile_corner_offsets(grid_pos)
+		floor_tile.corner_offset_tl = corner_offsets[0]
+		floor_tile.corner_offset_tr = corner_offsets[1]
+		floor_tile.corner_offset_br = corner_offsets[2]
+		floor_tile.corner_offset_bl = corner_offsets[3]
+	
 	# Regenerate mesh with new parameters
 	if floor_tile.has_method("_regenerate"):
 		floor_tile.call("_regenerate")
@@ -350,6 +364,42 @@ func _spawn_floor_tile(pos: Vector3) -> void:
 	floor_tile.set_meta("tile_center", pos + Vector3(0, floor_height, 0))
 	
 	_spawned_objects.append(floor_tile)
+
+
+## Calculates corner offsets for a tile based on grid position using noise.
+## Returns an array of 4 Vector2 offsets: [top-left, top-right, bottom-right, bottom-left]
+func _calculate_tile_corner_offsets(grid_pos: Vector2) -> Array[Vector2]:
+	var offsets: Array[Vector2] = []
+	
+	if not _noise:
+		# Return zero offsets if no noise is available
+		return [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
+	
+	# Sample noise at different offsets for each corner to get unique values
+	# Using prime number offsets to avoid patterns
+	var corner_seeds: Array[Vector2] = [
+		Vector2(0.0, 0.0),      # Top-left
+		Vector2(13.7, 0.0),     # Top-right
+		Vector2(13.7, 23.1),    # Bottom-right
+		Vector2(0.0, 23.1)      # Bottom-left
+	]
+	
+	for i in range(4):
+		var sample_pos: Vector2 = (grid_pos + corner_seeds[i]) * tile_variation_frequency
+		
+		# Sample noise twice (for x and y displacement)
+		var noise_x := _noise.get_noise_2d(sample_pos.x, sample_pos.y)
+		var noise_y := _noise.get_noise_2d(sample_pos.x + 100.0, sample_pos.y + 100.0)
+		
+		# Convert from [-1, 1] range to displacement range
+		var offset := Vector2(
+			noise_x * tile_corner_displacement,
+			noise_y * tile_corner_displacement
+		)
+		
+		offsets.append(offset)
+	
+	return offsets
 
 
 ## Spawns a custom base mesh that follows the map outline (walls + floors).

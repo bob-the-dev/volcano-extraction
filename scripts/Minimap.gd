@@ -69,17 +69,21 @@ func _generate_minimap() -> void:
 	var map_width: float = _procedural_map.get("map_width")
 	var map_height: float = _procedural_map.get("map_height")
 	var cell_size: float = _procedural_map.get("cell_size")
+	var edge_margin: int = _procedural_map.get("edge_margin") if "edge_margin" in _procedural_map else 3
 	
 	# Calculate grid dimensions
 	var grid_w := int(floor(map_width / cell_size)) - 4
 	var grid_h := int(floor(map_height / cell_size)) - 4
 	
-	# Store bounds for position mapping
+	# Calculate edge offset (tiles are placed starting from edge_margin * cell_size)
+	var edge_offset: float = edge_margin * cell_size
+	
+	# Store bounds for position mapping (must match procedural map's coordinate system)
 	_map_bounds = {
-		"min_x": 0.0,
-		"max_x": grid_w * cell_size,
-		"min_z": 0.0,
-		"max_z": grid_h * cell_size,
+		"min_x": edge_offset,
+		"max_x": edge_offset + grid_w * cell_size,
+		"min_z": edge_offset,
+		"max_z": edge_offset + grid_h * cell_size,
 		"width": grid_w * cell_size,
 		"height": grid_h * cell_size
 	}

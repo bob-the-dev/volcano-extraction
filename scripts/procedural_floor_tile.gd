@@ -29,6 +29,35 @@ extends StaticBody3D
 		if Engine.is_editor_hint():
 			call_deferred("_regenerate")
 
+@export_group("Corner Displacement")
+## Offset for top-left corner. Set by procedural map generator based on grid position + noise.
+@export var corner_offset_tl: Vector2 = Vector2.ZERO:
+	set(value):
+		corner_offset_tl = value
+		if Engine.is_editor_hint():
+			call_deferred("_regenerate")
+
+## Offset for top-right corner. Set by procedural map generator based on grid position + noise.
+@export var corner_offset_tr: Vector2 = Vector2.ZERO:
+	set(value):
+		corner_offset_tr = value
+		if Engine.is_editor_hint():
+			call_deferred("_regenerate")
+
+## Offset for bottom-right corner. Set by procedural map generator based on grid position + noise.
+@export var corner_offset_br: Vector2 = Vector2.ZERO:
+	set(value):
+		corner_offset_br = value
+		if Engine.is_editor_hint():
+			call_deferred("_regenerate")
+
+## Offset for bottom-left corner. Set by procedural map generator based on grid position + noise.
+@export var corner_offset_bl: Vector2 = Vector2.ZERO:
+	set(value):
+		corner_offset_bl = value
+		if Engine.is_editor_hint():
+			call_deferred("_regenerate")
+
 # Node references
 @onready var surface_mesh: MeshInstance3D = $Surface
 @onready var collision_shape: CollisionShape3D = $CollisionShape3D
@@ -116,18 +145,18 @@ func _generate_rounded_rect_perimeter() -> Array[Vector2]:
 	var half_size := tile_size * 0.5
 	var inset := corner_radius
 	
-	# Corner centers
-	var tl_center := Vector2(-half_size + inset, -half_size + inset)  # Top-left
-	var tr_center := Vector2(half_size - inset, -half_size + inset)   # Top-right
-	var br_center := Vector2(half_size - inset, half_size - inset)    # Bottom-right
-	var bl_center := Vector2(-half_size + inset, half_size - inset)   # Bottom-left
+	# Corner centers (with displacement applied)
+	var tl_center := Vector2(-half_size + inset, -half_size + inset) + corner_offset_tl  # Top-left
+	var tr_center := Vector2(half_size - inset, -half_size + inset) + corner_offset_tr   # Top-right
+	var br_center := Vector2(half_size - inset, half_size - inset) + corner_offset_br    # Bottom-right
+	var bl_center := Vector2(-half_size + inset, half_size - inset) + corner_offset_bl   # Bottom-left
 	
 	var angle_step := (PI * 0.5) / corner_segments
 	
 	# Trace perimeter clockwise starting from top-left corner end
-	# Top edge (left to right)
-	perimeter.append(Vector2(-half_size + inset, -half_size))
-	perimeter.append(Vector2(half_size - inset, -half_size))
+	# Top edge (left to right) - connect from top-left corner to top-right corner
+	perimeter.append(tl_center + Vector2(0, -corner_radius))  # End of top-left arc
+	perimeter.append(tr_center + Vector2(0, -corner_radius))  # Start of top-right arc
 	
 	# Top-right corner arc (start angle: -PI/2, end angle: 0)
 	for i in range(1, corner_segments + 1):
@@ -136,7 +165,7 @@ func _generate_rounded_rect_perimeter() -> Array[Vector2]:
 		perimeter.append(point)
 	
 	# Right edge (top to bottom)
-	perimeter.append(Vector2(half_size, half_size - inset))
+	perimeter.append(br_center + Vector2(corner_radius, 0))  # Start of bottom-right arc
 	
 	# Bottom-right corner arc (start angle: 0, end angle: PI/2)
 	for i in range(1, corner_segments + 1):
@@ -145,7 +174,7 @@ func _generate_rounded_rect_perimeter() -> Array[Vector2]:
 		perimeter.append(point)
 	
 	# Bottom edge (right to left)
-	perimeter.append(Vector2(-half_size + inset, half_size))
+	perimeter.append(bl_center + Vector2(0, corner_radius))  # Start of bottom-left arc
 	
 	# Bottom-left corner arc (start angle: PI/2, end angle: PI)
 	for i in range(1, corner_segments + 1):
@@ -154,7 +183,7 @@ func _generate_rounded_rect_perimeter() -> Array[Vector2]:
 		perimeter.append(point)
 	
 	# Left edge (bottom to top)
-	perimeter.append(Vector2(-half_size, -half_size + inset))
+	perimeter.append(tl_center + Vector2(-corner_radius, 0))  # Start of top-left arc
 	
 	# Top-left corner arc (start angle: PI, end angle: 3*PI/2)
 	for i in range(1, corner_segments + 1):

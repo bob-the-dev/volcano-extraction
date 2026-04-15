@@ -45,6 +45,12 @@ extends CharacterBody3D
 @export var target_color : Color = Color(1.0, 0.92, 0.6, 1.0)
 ## Emission energy for highlights
 @export var highlight_emission : float = 0.1
+## Show floating target indicator above clicked tile
+@export var show_target_indicator : bool = false
+## Height offset for target indicator above tile
+@export var target_indicator_height : float = 0.3
+## Size of target indicator ring
+@export var target_indicator_size : float = 0.8
 
 @export_group("Click Indicator")
 ## Show particle effect when clicking
@@ -53,6 +59,8 @@ extends CharacterBody3D
 @export var click_effect_color : Color = Color(1.0, 0.95, 0.7, 0.8)
 ## Number of particles in puff
 @export var click_particle_count : int = 15
+## Height offset for particles above clicked position
+@export var click_particle_height : float = 0.25
 
 @export_group("Debug")
 ## Show waypoint markers along path (controlled by procedural_map.show_grid_debug)
@@ -71,6 +79,7 @@ var _hovered_tile: Node3D = null
 var _target_tile: Node3D = null
 var _stored_materials: Dictionary = {}  # Store original materials
 var _click_indicator_scene: PackedScene = null
+var _target_indicator: Node3D = null  # Floating indicator mesh above target
 
 # Pathfinding variables
 var _astar: AStar2D = AStar2D.new()
@@ -443,6 +452,7 @@ func _handle_click_to_move(delta: float) -> void:
 			animation_player.play('idle')
 		_unhighlight_tile(_target_tile)
 		_target_tile = null
+		_clear_target_indicator()
 		return
 	
 	# Get current waypoint
@@ -464,6 +474,7 @@ func _handle_click_to_move(delta: float) -> void:
 			_current_path.clear()
 			_current_path_index = 0
 			_clear_waypoint_debug()  # Clear debug markers
+			_clear_target_indicator()  # Clear target indicator
 			velocity.x = move_toward(velocity.x, 0, move_speed)
 			velocity.z = move_toward(velocity.z, 0, move_speed)
 			if animation_player.current_animation == 'walk':
@@ -562,7 +573,8 @@ func _handle_click(screen_position: Vector2) -> void:
 			_has_target = true
 			_target_tile = collider
 			_highlight_tile(_target_tile, target_color)
-			_spawn_click_indicator(path[-1])  # Show indicator at final destination
+			_spawn_target_indicator(target_pos)  # Show floating indicator above target
+			_spawn_click_indicator(target_pos)  # Show particles at clicked position
 			_show_waypoint_debug(path)  # Show debug waypoint markers
 			
 			if debug_movement:
@@ -588,7 +600,8 @@ func _handle_click(screen_position: Vector2) -> void:
 			_current_path_index = 0
 			_target_position = _current_path[0] if not _current_path.is_empty() else target_pos
 			_has_target = true
-			_spawn_click_indicator(path[-1])  # Show indicator at final destination
+			_spawn_target_indicator(target_pos)  # Show floating indicator above target
+			_spawn_click_indicator(target_pos)  # Show particles at clicked position
 			_show_waypoint_debug(path)  # Show debug waypoint markers
 			
 			if debug_movement:
@@ -614,7 +627,8 @@ func _handle_click(screen_position: Vector2) -> void:
 			_current_path_index = 0
 			_target_position = _current_path[0] if not _current_path.is_empty() else target_pos
 			_has_target = true
-			_spawn_click_indicator(path[-1])  # Show indicator at final destination
+			_spawn_target_indicator(target_pos)  # Show floating indicator above target
+			_spawn_click_indicator(target_pos)  # Show particles at clicked position
 			_show_waypoint_debug(path)  # Show debug waypoint markers
 			
 			if debug_movement:
@@ -714,23 +728,24 @@ func _setup_click_indicator() -> void:
 	particles.emitting = false
 	particles.one_shot = true
 	particles.amount = click_particle_count
-	particles.lifetime = 100.0	
+	particles.lifetime = 1.0
 	particles.explosiveness = 1.0
 	particles.local_coords = false
+	particles.visibility_aabb = AABB(Vector3(-2, -2, -2), Vector3(4, 4, 4))
 	
 	# Create particle material
 	var process_material := ParticleProcessMaterial.new()
 	process_material.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	process_material.emission_sphere_radius = 0.3
+	process_material.emission_sphere_radius = 0.2
 	process_material.direction = Vector3(0, 1, 0)
-	process_material.spread = 65.0
-	process_material.initial_velocity_min = 1.0
-	process_material.initial_velocity_max = 2.5
-	process_material.gravity = Vector3(0, -5.0, 0)
-	process_material.damping_min = 1.0
-	process_material.damping_max = 2.0
-	process_material.scale_min = 0.02
-	process_material.scale_max = 0.06
+	process_material.spread = 45.0
+	process_material.initial_velocity_min = 1.5
+	process_material.initial_velocity_max = 3.0
+	process_material.gravity = Vector3(0, -9.8, 0)
+	process_material.damping_min = 0.5
+	process_material.damping_max = 1.5
+	process_material.scale_min = 0.04
+	process_material.scale_max = 0.08
 	
 	particles.process_material = process_material
 	
@@ -741,9 +756,12 @@ func _setup_click_indicator() -> void:
 	# Create particle material with color
 	var particle_material := StandardMaterial3D.new()
 	particle_material.albedo_color = click_effect_color
-	particle_material.emission_enabled = false
+	particle_material.emission_enabled = true
+	particle_material.emission = click_effect_color
+	particle_material.emission_energy = 0.5
 	particle_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	particle_material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	particle_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	
 	particle_mesh.material = particle_material
 	particles.draw_pass_1 = particle_mesh
@@ -754,6 +772,59 @@ func _setup_click_indicator() -> void:
 	_click_indicator_scene = packed
 
 
+## Spawns a floating target indicator above the target position
+func _spawn_target_indicator(target_pos: Vector3) -> void:
+	if not show_target_indicator:
+		return
+	
+	# Clear existing indicator
+	_clear_target_indicator()
+	
+	# Create a torus (ring) mesh
+	var torus_mesh := TorusMesh.new()
+	torus_mesh.inner_radius = target_indicator_size * 0.5
+	torus_mesh.outer_radius = target_indicator_size * 0.7
+	torus_mesh.rings = 32
+	torus_mesh.ring_segments = 16
+	
+	# Create material with emission
+	var material := StandardMaterial3D.new()
+	material.albedo_color = target_color
+	material.emission_enabled = true
+	material.emission = target_color
+	material.emission_energy = 0.5
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_color.a = 0.8
+	
+	# Create mesh instance
+	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.mesh = torus_mesh
+	mesh_instance.material_override = material
+	
+	# Position above target
+	get_tree().root.add_child(mesh_instance)
+	mesh_instance.global_position = target_pos + Vector3(0, target_indicator_height, 0)
+	mesh_instance.rotation.x = -PI / 2  # Rotate to lie flat
+	
+	_target_indicator = mesh_instance
+	
+	if debug_movement:
+		print("[Target Indicator] Spawned ring at ", target_pos, " + height offset")
+	
+	# Add gentle pulsing animation
+	var tween := create_tween()
+	tween.set_loops()
+	tween.tween_property(mesh_instance, "scale", Vector3(1.1, 1.1, 1.1), 0.8)
+	tween.tween_property(mesh_instance, "scale", Vector3(1.0, 1.0, 1.0), 0.8)
+
+
+## Clears the target indicator
+func _clear_target_indicator() -> void:
+	if _target_indicator and is_instance_valid(_target_indicator):
+		_target_indicator.queue_free()
+		_target_indicator = null
+
+
 ## Spawns a click indicator particle effect at position
 func _spawn_click_indicator(spawn_position: Vector3) -> void:
 	if not show_click_effect or not _click_indicator_scene:
@@ -761,8 +832,13 @@ func _spawn_click_indicator(spawn_position: Vector3) -> void:
 	
 	var particles: GPUParticles3D = _click_indicator_scene.instantiate()
 	get_tree().root.add_child(particles)
-	particles.global_position = spawn_position
+	# Spawn particles above the clicked position
+	particles.global_position = spawn_position + Vector3(0, click_particle_height, 0)
 	particles.emitting = true
+	particles.restart()
+	
+	if debug_movement:
+		print("[Click Effect] Spawned particles at ", spawn_position)
 	
 	# Auto-cleanup after lifetime
 	await get_tree().create_timer(particles.lifetime + 0.5).timeout
