@@ -9,6 +9,10 @@ extends Control
 @export var background_color: Color = Color.BLACK
 @export var player_color: Color = Color.GREEN
 @export var player_dot_size: int = 2
+@export var lava_source_color: Color = Color.RED
+@export var lava_source_dot_size: int = 3
+@export var highground_color: Color = Color(0.0, 1.0, 0.0)  # Bright green
+@export var highground_dot_size: int = 3
 
 var _minimap_image: Image
 var _minimap_texture: ImageTexture
@@ -106,9 +110,35 @@ func _generate_minimap() -> void:
 			elif cell.is_floor:
 				_minimap_image.set_pixel(x, y, floor_color)
 	
+	# Draw lava source markers
+	var lava_sources: Array = _procedural_map.get_lava_sources()
+	for lava_pos in lava_sources:
+		var x: int = int(lava_pos.x)
+		var y: int = int(lava_pos.y)
+		_draw_marker(_minimap_image, x, y, lava_source_color, lava_source_dot_size, grid_w, grid_h)
+	
+	# Draw highground markers
+	var highground_positions: Array = _procedural_map.get_highground_positions()
+	for high_pos in highground_positions:
+		var x: int = int(high_pos.x)
+		var y: int = int(high_pos.y)
+		_draw_marker(_minimap_image, x, y, highground_color, highground_dot_size, grid_w, grid_h)
+	
 	# Create texture
 	_minimap_texture = ImageTexture.create_from_image(_minimap_image)
 	_texture_rect.texture = _minimap_texture
+
+
+## Helper function to draw a circular marker on the minimap.
+func _draw_marker(image: Image, center_x: int, center_y: int, color: Color, marker_size: int, width: int, height: int) -> void:
+	for dx in range(-marker_size, marker_size + 1):
+		for dy in range(-marker_size, marker_size + 1):
+			var px: int = center_x + dx
+			var py: int = center_y + dy
+			if px >= 0 and px < width and py >= 0 and py < height:
+				# Only draw if within dot radius
+				if dx * dx + dy * dy <= marker_size * marker_size:
+					image.set_pixel(px, py, color)
 
 
 ## Updates player position on minimap.
@@ -127,15 +157,8 @@ func _update_player_position() -> void:
 	var pixel_x := int(normalized_x * temp_image.get_width())
 	var pixel_y := int(normalized_z * temp_image.get_height())
 	
-	# Draw player dot
-	for dx in range(-player_dot_size, player_dot_size + 1):
-		for dy in range(-player_dot_size, player_dot_size + 1):
-			var px := pixel_x + dx
-			var py := pixel_y + dy
-			if px >= 0 and px < temp_image.get_width() and py >= 0 and py < temp_image.get_height():
-				# Only draw if within dot radius
-				if dx * dx + dy * dy <= player_dot_size * player_dot_size:
-					temp_image.set_pixel(px, py, player_color)
+	# Draw player dot using helper function
+	_draw_marker(temp_image, pixel_x, pixel_y, player_color, player_dot_size, temp_image.get_width(), temp_image.get_height())
 	
 	# Update texture
 	_minimap_texture.update(temp_image)

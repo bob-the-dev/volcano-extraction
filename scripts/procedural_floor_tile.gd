@@ -137,6 +137,10 @@ func _generate_floor_tile(mesh_node: MeshInstance3D) -> void:
 	surface_tool.generate_normals()
 	var array_mesh := surface_tool.commit()
 	mesh_node.mesh = array_mesh
+	
+	# Set a large custom AABB to prevent incorrect culling
+	var large_aabb := AABB(Vector3(-tile_size, -1.0, -tile_size), Vector3(tile_size * 2, tile_height + 2.0, tile_size * 2))
+	mesh_node.set_custom_aabb(large_aabb)
 
 
 ## Generates the perimeter vertices of a rounded rectangle (clockwise).

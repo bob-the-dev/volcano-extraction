@@ -67,9 +67,9 @@ extends CharacterBody3D
 @export var waypoint_debug_color: Color = Color(1, 1, 0, 0.8)
 
 @export_group("Pathfinding Costs")
-## Cost multiplier for walking through lava (higher = more avoided)
-@export var lava_cost_multiplier: float = 10.0
-## Base cost for normal floor tiles
+## Cost multiplier per depth level (higher depth = deeper = more cost)
+@export var depth_cost_multiplier: float = 2.0
+## Base cost for depth 0 (highest) tiles
 @export var floor_base_cost: float = 1.0
 
 # Click-to-move variables
@@ -188,25 +188,29 @@ func _initialize_pathfinding() -> void:
 	
 	# Add all walkable cells to AStar with appropriate weights
 	var added_count := 0
-	var lava_count := 0
+	var depth_counts: Array[int] = [0, 0, 0, 0, 0]  # Track cells per depth level
 	for cell in walkable_cells:
 		if cell:
 			var grid_pos: Vector2 = cell.position
 			var point_id := _grid_to_id(grid_pos)
 			_astar.add_point(point_id, grid_pos)
 			
-			# Set weight based on cell type (Dijkstra-style weighted pathfinding)
-			if cell.is_lava:
-				_astar.set_point_weight_scale(point_id, lava_cost_multiplier)
-				lava_count += 1
-			else:
-				_astar.set_point_weight_scale(point_id, floor_base_cost)
+			# Set weight based on depth (Dijkstra-style weighted pathfinding)
+			# Deeper cells (higher depth value) have higher cost
+			var depth: int = cell.depth if "depth" in cell else 0
+			var weight: float = floor_base_cost + (depth * depth_cost_multiplier)
+			_astar.set_point_weight_scale(point_id, weight)
+			
+			if depth >= 0 and depth <= 4:
+				depth_counts[depth] += 1
 			
 			added_count += 1
 	
 	print("[Pathfinding] Added ", added_count, " walkable cells to AStar grid")
-	print("[Pathfinding] - Floor cells: ", added_count - lava_count, " (cost: ", floor_base_cost, ")")
-	print("[Pathfinding] - Lava cells: ", lava_count, " (cost: ", lava_cost_multiplier, "x)")
+	print("[Pathfinding] Depth distribution and costs:")
+	for d in range(5):
+		var cost: float = floor_base_cost + (d * depth_cost_multiplier)
+		print("  - Depth ", d, ": ", depth_counts[d], " cells (cost: ", cost, ")")
 	
 	# Connect neighboring walkable cells (orthogonal only - up/down/left/right)
 	var connection_count := 0

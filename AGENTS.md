@@ -148,6 +148,7 @@
 - Proper type hints for all variables and returns
 - Comments explaining complex logic
 - Error handling for common edge cases
+- Always check for types, as infering won't work every time.
 
 ### Consider Context
 
