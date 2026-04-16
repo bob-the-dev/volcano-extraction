@@ -1035,11 +1035,37 @@ uniform float emission_energy = 0.27;
 uniform float roughness_value = 0.0;
 uniform float metallic_value = 0.0;
 uniform float specular_value = 0.0;
+uniform float bottom_darkness = 0.45;
+uniform float depth_gradient_strength = 1.0;
+uniform float darkness_noise_scale = 18.0;
+uniform float darkness_noise_strength = 0.16;
+
+varying vec2 heightmap_uv;
+
+float hash12(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float value_noise(vec2 uv) {
+	vec2 cell = floor(uv);
+	vec2 local = fract(uv);
+	vec2 smooth_local = local * local * (3.0 - 2.0 * local);
+
+	float bottom_left = hash12(cell);
+	float bottom_right = hash12(cell + vec2(1.0, 0.0));
+	float top_left = hash12(cell + vec2(0.0, 1.0));
+	float top_right = hash12(cell + vec2(1.0, 1.0));
+
+	float bottom_mix = mix(bottom_left, bottom_right, smooth_local.x);
+	float top_mix = mix(top_left, top_right, smooth_local.x);
+	return mix(bottom_mix, top_mix, smooth_local.y);
+}
 
 void vertex() {
 	// VERTEX coordinates for PlaneMesh range from -plane_size/2 to +plane_size/2
 	// Convert to UV space (0 to 1)
 	vec2 uv = (VERTEX.xz / plane_size) + 0.5;
+	heightmap_uv = uv;
 	
 	// Sample heightmap and displace vertex upward
 	float height_value = texture(heightmap, uv).r;
@@ -1065,9 +1091,17 @@ void vertex() {
 }
 
 void fragment() {
+	float height_value = texture(heightmap, heightmap_uv).r;
+	float noise_a = value_noise(heightmap_uv * darkness_noise_scale);
+	float noise_b = value_noise((heightmap_uv + vec2(17.3, 9.1)) * (darkness_noise_scale * 0.5));
+	float combined_noise = mix(noise_a, noise_b, 0.35);
+	float noise_offset = (combined_noise - 0.5) * darkness_noise_strength;
+	float depth_factor = clamp((1.0 - height_value) * depth_gradient_strength + noise_offset, 0.0, 1.0);
+	vec3 depth_tint = mix(vec3(bottom_darkness), vec3(1.0), 1.0 - depth_factor);
+
 	// Apply wall.tres material properties
-	ALBEDO = albedo_color.rgb;
-	EMISSION = emission_color.rgb * emission_energy;
+	ALBEDO = albedo_color.rgb * depth_tint;
+	EMISSION = emission_color.rgb * emission_energy * depth_tint;
 	ROUGHNESS = roughness_value;
 	METALLIC = metallic_value;
 	SPECULAR = specular_value;

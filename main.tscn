@@ -29,11 +29,9 @@ script = ExtResource("3_1bvp3")
 environment = SubResource("Environment_c5lsl")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-transform = Transform3D(0.57928115, 0.51848507, 0.62897265, 0, -0.77162457, 0.63607824, 0.8151278, -0.36846814, -0.44698757, -2.945, 5.175, 0)
-light_energy = 2.205
-light_angular_distance = 17.88
+transform = Transform3D(-0.29570797, -0.554733, 0.777707, 0, 0.8141155, 0.58070296, -0.95527834, 0.17171851, -0.24074048, 0, 0, 0)
 shadow_enabled = true
-shadow_opacity = 0.49
+shadow_blur = 5.5
 
 [node name="Player" parent="." instance=ExtResource("2_0xm2m")]
 transform = Transform3D(3, 0, 0, 0, 3, 0, 0, 0, 3, -2.9500206, 0, -0.06919098)
@@ -79,10 +77,10 @@ median_rooms = 20
 random_seed = 11670
 num_lava_sources = 3
 num_highground = 2
-pixels_per_cell = 8
-blur_radius = 2
+pixels_per_cell = 10
+blur_radius = 3
 mesh_subdivisions = 4
-heightmap_displacement_amplitude = 2.0
+heightmap_displacement_amplitude = 2.604
 export_heightmap_debug = true
 show_grid_debug = false
 show_depth_labels = false
