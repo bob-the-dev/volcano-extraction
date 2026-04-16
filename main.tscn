@@ -30,7 +30,6 @@ environment = SubResource("Environment_c5lsl")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.57928115, 0.51848507, 0.62897265, 0, -0.77162457, 0.63607824, 0.8151278, -0.36846814, -0.44698757, -2.945, 5.175, 0)
-light_color = Color(0.8613807, 0.856946, 0, 1)
 light_energy = 2.205
 light_angular_distance = 17.88
 shadow_enabled = true
@@ -80,9 +79,10 @@ median_rooms = 20
 random_seed = 11670
 num_lava_sources = 3
 num_highground = 2
+pixels_per_cell = 8
 blur_radius = 2
 mesh_subdivisions = 4
-heightmap_displacement_amplitude = 1.576
+heightmap_displacement_amplitude = 2.0
 export_heightmap_debug = true
 show_grid_debug = false
 show_depth_labels = false

@@ -185,14 +185,15 @@ func _initialize_pathfinding() -> void:
 	
 	# Combine floor and lava cells for pathfinding
 	var walkable_cells: Array = floor_cells + lava_cells
+	var cell_depth_by_id: Dictionary = {}
 	
 	# Add all walkable cells to AStar with appropriate weights
-	var added_count := 0
+	var added_count: int = 0
 	var depth_counts: Array[int] = [0, 0, 0, 0, 0]  # Track cells per depth level
 	for cell in walkable_cells:
 		if cell:
 			var grid_pos: Vector2 = cell.position
-			var point_id := _grid_to_id(grid_pos)
+			var point_id: int = _grid_to_id(grid_pos)
 			_astar.add_point(point_id, grid_pos)
 			
 			# Set weight based on depth (Dijkstra-style weighted pathfinding)
@@ -200,6 +201,7 @@ func _initialize_pathfinding() -> void:
 			var depth: int = cell.depth if "depth" in cell else 0
 			var weight: float = floor_base_cost + (depth * depth_cost_multiplier)
 			_astar.set_point_weight_scale(point_id, weight)
+			cell_depth_by_id[point_id] = depth
 			
 			if depth >= 0 and depth <= 4:
 				depth_counts[depth] += 1
@@ -213,15 +215,21 @@ func _initialize_pathfinding() -> void:
 		print("  - Depth ", d, ": ", depth_counts[d], " cells (cost: ", cost, ")")
 	
 	# Connect neighboring walkable cells (orthogonal only - up/down/left/right)
+	# Movement rules:
+	# - Same height is always allowed.
+	# - Moving downhill is always allowed.
+	# - Moving uphill is only allowed by one level.
 	var connection_count := 0
+	var blocked_connection_count: int = 0
 	for cell in walkable_cells:
 		if cell:
 			# Connect all floor cells including lava
 			var grid_pos: Vector2 = cell.position
-			var point_id := _grid_to_id(grid_pos)
+			var point_id: int = _grid_to_id(grid_pos)
+			var current_depth: int = int(cell_depth_by_id.get(point_id, 0))
 			
 			# Check 4 orthogonal neighbors
-			var neighbors := [
+			var neighbors: Array[Vector2] = [
 				Vector2(grid_pos.x + 1, grid_pos.y),  # Right
 				Vector2(grid_pos.x - 1, grid_pos.y),  # Left
 				Vector2(grid_pos.x, grid_pos.y + 1),  # Down
@@ -229,17 +237,31 @@ func _initialize_pathfinding() -> void:
 			]
 			
 			for neighbor_pos in neighbors:
-				var neighbor_id := _grid_to_id(neighbor_pos)
+				var neighbor_id: int = _grid_to_id(neighbor_pos)
 				if _astar.has_point(neighbor_id):
-					# Only connect if not already connected
-					if not _astar.are_points_connected(point_id, neighbor_id):
-						_astar.connect_points(point_id, neighbor_id)
-						connection_count += 1
+					var neighbor_depth: int = int(cell_depth_by_id.get(neighbor_id, 0))
+					if _can_traverse_depth(current_depth, neighbor_depth):
+						if not _astar.are_points_connected(point_id, neighbor_id, false):
+							_astar.connect_points(point_id, neighbor_id, false)
+							connection_count += 1
+					else:
+						blocked_connection_count += 1
 	
 	print("[Pathfinding] Created ", connection_count, " connections between cells")
+	print("[Pathfinding] Blocked ", blocked_connection_count, " depth-restricted connections")
 	
 	_pathfinding_initialized = true
 	print("[Pathfinding] ✓ Initialization complete with ", _astar.get_point_count(), " walkable cells")
+
+
+func _can_traverse_depth(from_depth: int, to_depth: int) -> bool:
+	if to_depth == from_depth:
+		return true
+
+	if to_depth > from_depth:
+		return true
+
+	return to_depth == from_depth - 1
 
 
 ## Convert grid coordinates to unique point ID

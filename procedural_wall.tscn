@@ -23,6 +23,7 @@ height_segments = 8
 
 [node name="Surface" type="MeshInstance3D" parent="."]
 material_override = ExtResource("2_wall_material")
+gi_mode = 2
 mesh = SubResource("ArrayMesh_emcpy")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]

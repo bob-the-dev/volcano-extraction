@@ -699,20 +699,24 @@ func _spawn_base_mesh() -> void:
 	var terrain_shader := _create_terrain_displacement_material()
 	mesh_instance.material_override = terrain_shader
 	
-	# Step 4: Create simple flat collision at floor_height (depth 0 level)
+	# Step 4: Create collision that follows the displayed terrain surface
 	var grid_width: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
 	var grid_height: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
 	var playable_width: float = grid_width * cell_size
 	var playable_height: float = grid_height * cell_size
-	var max_displacement: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
 	
 	var static_body := StaticBody3D.new()
 	var collision_shape := CollisionShape3D.new()
-	var box_shape := BoxShape3D.new()
-	box_shape.size = Vector3(playable_width, 0.2, playable_height)
-	collision_shape.shape = box_shape
-	# Collision at max_displacement relative to static_body (which is at floor_height - max_displacement)
-	collision_shape.position = Vector3(0, max_displacement, 0)
+	var terrain_collision_shape: Shape3D = _create_terrain_collision_shape(playable_width, playable_height, grid_width, grid_height)
+	if terrain_collision_shape:
+		collision_shape.shape = terrain_collision_shape
+	else:
+		var max_displacement: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
+		var box_shape := BoxShape3D.new()
+		box_shape.size = Vector3(playable_width, 0.2, playable_height)
+		collision_shape.shape = box_shape
+		collision_shape.position = Vector3(0, max_displacement, 0)
+		push_warning("[Heightmap Terrain] Falling back to flat collision because terrain collision generation failed")
 	
 	static_body.add_child(collision_shape)
 	static_body.position = mesh_instance.position
@@ -723,10 +727,117 @@ func _spawn_base_mesh() -> void:
 	_spawned_objects.append(static_body)
 	_spawned_objects.append(mesh_instance)
 	
-	print("[Heightmap Terrain] Collision at world Y: ", floor_height, " (depth 0, wall level)")
-	print("[Heightmap Terrain] Terrain mesh with flat collision added to scene")
+	print("[Heightmap Terrain] Terrain collision anchored to mesh base Y: ", mesh_instance.position.y)
+	print("[Heightmap Terrain] Terrain mesh with terrain-following collision added to scene")
 	
 	print("[Heightmap Terrain] Created terrain mesh with heightmap texture")
+
+
+## Creates a collision-only trimesh that matches the displayed terrain surface.
+func _create_terrain_collision_shape(playable_width: float, playable_height: float, grid_width: int, grid_height: int) -> Shape3D:
+	if _heightmap_image == null:
+		push_error("[Heightmap Terrain] Missing heightmap image for terrain collision generation")
+		return null
+
+	var width_segments: int = grid_width * mesh_subdivisions
+	var depth_segments: int = grid_height * mesh_subdivisions
+	if width_segments <= 0 or depth_segments <= 0:
+		push_error("[Heightmap Terrain] Invalid terrain subdivision values for collision generation")
+		return null
+
+	var displacement_amplitude: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
+	var vertices: Array[PackedVector3Array] = []
+	vertices.resize(width_segments + 1)
+
+	for x_index in range(width_segments + 1):
+		var column: PackedVector3Array = PackedVector3Array()
+		column.resize(depth_segments + 1)
+		var x_ratio: float = float(x_index) / float(width_segments)
+		var local_x: float = lerpf(-playable_width * 0.5, playable_width * 0.5, x_ratio)
+
+		for z_index in range(depth_segments + 1):
+			var z_ratio: float = float(z_index) / float(depth_segments)
+			var local_z: float = lerpf(-playable_height * 0.5, playable_height * 0.5, z_ratio)
+			var uv: Vector2 = Vector2(
+				(local_x / playable_width) + 0.5,
+				(local_z / playable_height) + 0.5
+			)
+			var height_value: float = _sample_heightmap_bilinear(_heightmap_image, uv)
+			column[z_index] = Vector3(local_x, height_value * displacement_amplitude, local_z)
+
+		vertices[x_index] = column
+
+	var faces: PackedVector3Array = PackedVector3Array()
+	faces.resize(width_segments * depth_segments * 6)
+	var face_index: int = 0
+
+	for x_index in range(width_segments):
+		for z_index in range(depth_segments):
+			var top_left: Vector3 = vertices[x_index][z_index]
+			var top_right: Vector3 = vertices[x_index + 1][z_index]
+			var bottom_left: Vector3 = vertices[x_index][z_index + 1]
+			var bottom_right: Vector3 = vertices[x_index + 1][z_index + 1]
+
+			faces[face_index] = top_left
+			face_index += 1
+			faces[face_index] = bottom_left
+			face_index += 1
+			faces[face_index] = top_right
+			face_index += 1
+
+			faces[face_index] = top_right
+			face_index += 1
+			faces[face_index] = bottom_left
+			face_index += 1
+			faces[face_index] = bottom_right
+			face_index += 1
+
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = faces
+
+	var array_mesh: ArrayMesh = ArrayMesh.new()
+	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	var shape: ConcavePolygonShape3D = array_mesh.create_trimesh_shape()
+	if shape == null:
+		push_error("[Heightmap Terrain] Failed to convert generated terrain mesh into a collision shape")
+		return null
+
+	shape.backface_collision = true
+
+	print("[Heightmap Terrain] Generated terrain collision with ", width_segments, "x", depth_segments, " quads")
+	return shape
+
+
+## Samples the heightmap image using bilinear filtering to match rendered terrain.
+func _sample_heightmap_bilinear(image: Image, uv: Vector2) -> float:
+	var clamped_uv: Vector2 = Vector2(
+		clampf(uv.x, 0.0, 1.0),
+		clampf(uv.y, 0.0, 1.0)
+	)
+	var width: int = image.get_width()
+	var height: int = image.get_height()
+	if width <= 0 or height <= 0:
+		return 0.0
+
+	var pixel_x: float = clamped_uv.x * float(width - 1)
+	var pixel_y: float = clamped_uv.y * float(height - 1)
+	var x0: int = int(floor(pixel_x))
+	var y0: int = int(floor(pixel_y))
+	var x1: int = mini(x0 + 1, width - 1)
+	var y1: int = mini(y0 + 1, height - 1)
+	var x_lerp: float = pixel_x - float(x0)
+	var y_lerp: float = pixel_y - float(y0)
+
+	var top_left: float = image.get_pixel(x0, y0).r
+	var top_right: float = image.get_pixel(x1, y0).r
+	var bottom_left: float = image.get_pixel(x0, y1).r
+	var bottom_right: float = image.get_pixel(x1, y1).r
+	var top: float = lerpf(top_left, top_right, x_lerp)
+	var bottom: float = lerpf(bottom_left, bottom_right, x_lerp)
+
+	return lerpf(top, bottom, y_lerp)
 
 
 ## Generates a heightmap texture from cell depth data

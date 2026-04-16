@@ -2217,6 +2217,21 @@ material_override = ExtResource("3_i3pqv")
 mesh = SubResource("ArrayMesh_4mywg")
 skin = SubResource("Skin_d8d7d")
 
+[node name="LeftArmLightAttachment" type="BoneAttachment3D" parent="character-human/Skeleton3D"]
+transform = Transform3D(1, -2.0362789e-15, 3.7216648e-08, -1.0497901e-15, 0.99999994, 8.29217e-08, -3.7216658e-08, -8.29217e-08, 0.99999994, 0.09989679, 0.28774998, -0.0122499745)
+bone_name = "arm-left"
+bone_idx = 4
+
+[node name="SpotLight3D" type="SpotLight3D" parent="character-human/Skeleton3D/LeftArmLightAttachment"]
+transform = Transform3D(-0.33216116, 0.94322264, 8.733957e-08, 0.94232494, 0.33184502, -0.043619387, -0.04114282, -0.014488583, -0.99904823, 0.11, 0, 0.02)
+light_energy = 6.0
+light_indirect_energy = 0.1
+light_volumetric_fog_energy = 0.0
+shadow_enabled = true
+spot_range = 10.0
+spot_angle = 38.0
+spot_angle_attenuation = 0.8
+
 [node name="AnimationPlayer" type="AnimationPlayer" parent="."]
 libraries = {
 &"": SubResource("AnimationLibrary_3sg01")
