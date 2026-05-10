@@ -7,7 +7,7 @@
 [ext_resource type="Script" uid="uid://djs5e7lkbo60e" path="res://scripts/procedural_map.gd" id="7_5vw27"]
 [ext_resource type="Script" uid="uid://lvdibt8falnc" path="res://scripts/Minimap.gd" id="8_minimap"]
 [ext_resource type="Script" uid="uid://cjwi6sdjl523b" path="res://scripts/WaterControls.gd" id="9_water_controls"]
-[ext_resource type="Material" uid="uid://dl7f3lbnvxlda" path="res://materials/water_ssr_material.tres" id="10_water_material"]
+[ext_resource type="Material" uid="uid://dnokpgg4edfw7" path="res://shaders/psOneLava.tres" id="10_water_material"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_as1t3"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)

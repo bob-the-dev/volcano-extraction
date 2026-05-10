@@ -89,6 +89,8 @@ class Cell:
 @export_group("Scene Spawns")
 ## Optional scene to place at each deepest walkable source cell.
 @export var deepest_point_scene: PackedScene = preload("res://fatguy.gltf")
+## Optional opaque material override for procedurally spawned deepest-point meshes.
+@export var deepest_point_material_override: Material = preload("res://materials/deepest_point_surface.tres")
 ## Uniform scale applied to spawned deepest-point scenes.
 @export var deepest_point_scene_scale: Vector3 = Vector3(8.909, 8.909, 8.909)
 ## Extra world-space height added after sampling the terrain surface.
@@ -105,15 +107,15 @@ class Cell:
 @export_range(0.5, 20.0, 0.1) var water_height_lerp_speed: float = 6.0
 ## Lift the water surface slightly to avoid z-fighting on the waterline.
 @export var water_surface_offset: float = 0.02
-## Extend the water volume below the lowest terrain level.
-@export var water_bottom_padding: float = 0.6
-## Inset the outer perimeter slightly so water does not clip through walls.
-@export var water_edge_inset: float = 0.08
-## Optional material override for the generated water volume.
+## Extra world-space coverage added to each side of the generated surface.
+@export_range(0.0, 1.0, 0.05) var water_surface_margin_ratio: float = 0.2
+## Maximum subdivisions used for the generated lava surface plane.
+@export_range(8, 256) var water_surface_max_subdivisions: int = 96
+## Optional material override for the generated lava surface.
 @export var water_material: Material
-## Base color and transparency for the fallback generated water material.
+## Base color and transparency for the fallback generated lava surface material.
 @export var water_color: Color = Color(0.08, 0.33, 0.46, 0.5)
-## Emission tint to keep water readable in darker areas for the fallback material.
+## Emission tint to keep the fallback material readable in darker areas.
 @export var water_emission_color: Color = Color(0.04, 0.18, 0.28, 1.0)
 
 @export_group("Debug")
@@ -143,6 +145,7 @@ var _heightmap_image: Image  # Store heightmap image for collision generation
 var _water_volume: MeshInstance3D
 var _displayed_water_height_level: float = 3.0
 var _target_water_height_level: float = 3.0
+var _default_water_surface_material: Material = preload("res://shaders/psOneLava.tres")
 
 # Materials
 var _base_material: StandardMaterial3D
@@ -797,160 +800,75 @@ func _spawn_deepest_point_scenes() -> void:
 		add_child(spawned_node)
 		spawned_node.position = _get_cell_surface_position(source_cell) + Vector3(0.0, deepest_point_scene_height_offset, 0.0)
 		spawned_node.scale = deepest_point_scene_scale
+		if deepest_point_material_override != null:
+			_apply_material_override_to_meshes(spawned_node, deepest_point_material_override)
 		spawned_node.add_to_group("deepest_point_scene")
 		_spawned_objects.append(spawned_node)
 
 	print("[Deepest Spawn] Spawned ", _lava_sources.size(), " scene instances")
 
 
-## Spawns a translucent water volume that fills terrain up to the configured depth level.
+## Applies a material override to every mesh in a spawned scene subtree.
+func _apply_material_override_to_meshes(node: Node, material: Material) -> void:
+	if node is MeshInstance3D:
+		var mesh_instance: MeshInstance3D = node as MeshInstance3D
+		mesh_instance.material_override = material
+
+	for child in node.get_children():
+		var child_node: Node = child
+		_apply_material_override_to_meshes(child_node, material)
+
+
+## Spawns a full-area lava surface plane that tracks the configured depth level.
 func _spawn_water_volume() -> void:
 	_remove_water_volume()
 
 	if not render_water or not use_layered_depth:
 		return
 
+	var surface_bounds: Dictionary = _get_water_surface_bounds()
+	if surface_bounds.is_empty():
+		push_warning("[Water] Could not determine generated map bounds for lava surface")
+		return
+
 	var clamped_water_level: float = clampf(_displayed_water_height_level, 0.0, 4.0)
 	var surface_y: float = _get_depth_level_world_height(clamped_water_level) + water_surface_offset
-	var submerged_lookup: Dictionary = {}
-	var submerged_cells: Array[Cell] = []
-	for cell in _cells:
-		if not cell.is_floor:
-			continue
-
-		var cell_surface_y: float = _get_depth_world_height(cell.depth)
-		if cell_surface_y <= surface_y + 0.001:
-			var cell_key: Vector2i = Vector2i(int(cell.position.x), int(cell.position.y))
-			submerged_lookup[cell_key] = true
-			submerged_cells.append(cell)
-
-	if submerged_cells.is_empty():
-		print("[Water] No submerged cells at water level ", clamped_water_level)
+	var surface_center: Vector3 = surface_bounds.get("center", Vector3.ZERO)
+	var surface_size: Vector2 = surface_bounds.get("size", Vector2.ZERO)
+	if surface_size.x <= 0.0 or surface_size.y <= 0.0:
+		push_warning("[Water] Lava surface bounds produced an invalid size")
 		return
 
-	var bottom_y: float = _get_depth_world_height(4) - water_bottom_padding
-	if surface_y <= bottom_y:
-		push_warning("[Water] Water surface height is below the water bottom; skipping water volume")
-		return
-
-	var surface_tool: SurfaceTool = SurfaceTool.new()
-	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
-
-	var half_cell: float = cell_size * 0.5
-	var max_inset: float = minf(water_edge_inset, half_cell * 0.45)
-	var render_surface_only: bool = _should_render_water_surface_only()
-
-	for cell in submerged_cells:
-		var grid_x: int = int(cell.position.x)
-		var grid_y: int = int(cell.position.y)
-		var left_key: Vector2i = Vector2i(grid_x - 1, grid_y)
-		var right_key: Vector2i = Vector2i(grid_x + 1, grid_y)
-		var top_key: Vector2i = Vector2i(grid_x, grid_y - 1)
-		var bottom_key: Vector2i = Vector2i(grid_x, grid_y + 1)
-
-		var inset_left: float = max_inset if not submerged_lookup.has(left_key) else 0.0
-		var inset_right: float = max_inset if not submerged_lookup.has(right_key) else 0.0
-		var inset_top: float = max_inset if not submerged_lookup.has(top_key) else 0.0
-		var inset_bottom: float = max_inset if not submerged_lookup.has(bottom_key) else 0.0
-
-		var world_pos: Vector3 = _cell_to_world(cell.position)
-		var min_x: float = world_pos.x - half_cell + inset_left
-		var max_x: float = world_pos.x + half_cell - inset_right
-		var min_z: float = world_pos.z - half_cell + inset_top
-		var max_z: float = world_pos.z + half_cell - inset_bottom
-
-		if min_x >= max_x or min_z >= max_z:
-			continue
-
-		var nw_top: Vector3 = Vector3(min_x, surface_y, min_z)
-		var ne_top: Vector3 = Vector3(max_x, surface_y, min_z)
-		var sw_top: Vector3 = Vector3(min_x, surface_y, max_z)
-		var se_top: Vector3 = Vector3(max_x, surface_y, max_z)
-
-		var nw_bottom: Vector3 = Vector3(min_x, bottom_y, min_z)
-		var ne_bottom: Vector3 = Vector3(max_x, bottom_y, min_z)
-		var sw_bottom: Vector3 = Vector3(min_x, bottom_y, max_z)
-		var se_bottom: Vector3 = Vector3(max_x, bottom_y, max_z)
-
-		# Top face
-		surface_tool.add_vertex(nw_top)
-		surface_tool.add_vertex(sw_top)
-		surface_tool.add_vertex(ne_top)
-		surface_tool.add_vertex(ne_top)
-		surface_tool.add_vertex(sw_top)
-		surface_tool.add_vertex(se_top)
-
-		if render_surface_only:
-			continue
-
-		# Bottom face
-		surface_tool.add_vertex(nw_bottom)
-		surface_tool.add_vertex(ne_bottom)
-		surface_tool.add_vertex(sw_bottom)
-		surface_tool.add_vertex(ne_bottom)
-		surface_tool.add_vertex(se_bottom)
-		surface_tool.add_vertex(sw_bottom)
-
-		# North edge
-		if not submerged_lookup.has(top_key):
-			surface_tool.add_vertex(nw_top)
-			surface_tool.add_vertex(ne_top)
-			surface_tool.add_vertex(nw_bottom)
-			surface_tool.add_vertex(ne_top)
-			surface_tool.add_vertex(ne_bottom)
-			surface_tool.add_vertex(nw_bottom)
-
-		# South edge
-		if not submerged_lookup.has(bottom_key):
-			surface_tool.add_vertex(sw_top)
-			surface_tool.add_vertex(sw_bottom)
-			surface_tool.add_vertex(se_top)
-			surface_tool.add_vertex(se_top)
-			surface_tool.add_vertex(sw_bottom)
-			surface_tool.add_vertex(se_bottom)
-
-		# West edge
-		if not submerged_lookup.has(left_key):
-			surface_tool.add_vertex(nw_top)
-			surface_tool.add_vertex(nw_bottom)
-			surface_tool.add_vertex(sw_top)
-			surface_tool.add_vertex(sw_top)
-			surface_tool.add_vertex(nw_bottom)
-			surface_tool.add_vertex(sw_bottom)
-
-		# East edge
-		if not submerged_lookup.has(right_key):
-			surface_tool.add_vertex(ne_top)
-			surface_tool.add_vertex(se_top)
-			surface_tool.add_vertex(ne_bottom)
-			surface_tool.add_vertex(se_top)
-			surface_tool.add_vertex(se_bottom)
-			surface_tool.add_vertex(ne_bottom)
-
-	surface_tool.generate_normals()
-	var water_mesh: ArrayMesh = surface_tool.commit()
-	if water_mesh == null:
-		push_warning("[Water] Failed to generate water mesh")
-		return
+	var plane_mesh: PlaneMesh = PlaneMesh.new()
+	plane_mesh.size = surface_size
+	var subdivisions_x: int = clampi(int(ceil(surface_size.x / maxf(cell_size, 0.001))), 8, water_surface_max_subdivisions)
+	var subdivisions_z: int = clampi(int(ceil(surface_size.y / maxf(cell_size, 0.001))), 8, water_surface_max_subdivisions)
+	plane_mesh.subdivide_width = subdivisions_x
+	plane_mesh.subdivide_depth = subdivisions_z
 
 	var water_instance: MeshInstance3D = MeshInstance3D.new()
-	water_instance.mesh = water_mesh
+	water_instance.mesh = plane_mesh
 	water_instance.material_override = _create_water_material()
 	water_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	water_instance.extra_cull_margin = 1000.0
 	water_instance.add_to_group("water_volume")
+	water_instance.add_to_group("lava_surface")
+	water_instance.position = Vector3(surface_center.x, surface_y, surface_center.z)
 	_water_volume = water_instance
 
 	add_child(water_instance)
 	_spawned_objects.append(water_instance)
 
-	print("[Water] Spawned water volume for ", submerged_cells.size(), " cells at level ", clamped_water_level)
+	print("[Water] Spawned lava surface plane at level ", clamped_water_level, " with size ", surface_size)
 
 
-## Creates the material used by the generated water volume.
+## Creates the material used by the generated lava surface.
 func _create_water_material() -> Material:
 	if water_material != null:
 		return water_material
+
+	if _default_water_surface_material != null:
+		return _default_water_surface_material
 
 	var material: StandardMaterial3D = StandardMaterial3D.new()
 	material.albedo_color = water_color
@@ -965,11 +883,6 @@ func _create_water_material() -> Material:
 	material.refraction_enabled = true
 	material.refraction_scale = 0.02
 	return material
-
-
-## Returns whether the current water material expects a top surface instead of a closed volume.
-func _should_render_water_surface_only() -> bool:
-	return water_material is ShaderMaterial
 
 
 ## Raises the water surface by one configured step.
@@ -1010,7 +923,11 @@ func _refresh_water_volume() -> void:
 	if _cells.is_empty():
 		return
 
-	_spawn_water_volume()
+	if _water_volume == null or not is_instance_valid(_water_volume):
+		_spawn_water_volume()
+		return
+
+	_water_volume.position.y = _get_depth_level_world_height(_displayed_water_height_level) + water_surface_offset
 
 
 ## Synchronizes the water target and displayed level from the exported value.
@@ -1058,6 +975,44 @@ func _remove_water_volume() -> void:
 ## Converts a discrete depth level into the world-space terrain height.
 func _get_depth_world_height(depth: int) -> float:
 	return _get_depth_level_world_height(float(depth))
+
+
+## Returns the generated map bounds expanded with an extra surface margin on every side.
+func _get_water_surface_bounds() -> Dictionary:
+	if _cells.is_empty():
+		return {}
+
+	var half_cell: float = cell_size * 0.5
+	var min_x: float = INF
+	var max_x: float = -INF
+	var min_z: float = INF
+	var max_z: float = -INF
+
+	for cell in _cells:
+		if not cell.filled:
+			continue
+
+		var world_pos: Vector3 = _cell_to_world(cell.position)
+		min_x = minf(min_x, world_pos.x - half_cell)
+		max_x = maxf(max_x, world_pos.x + half_cell)
+		min_z = minf(min_z, world_pos.z - half_cell)
+		max_z = maxf(max_z, world_pos.z + half_cell)
+
+	if min_x == INF or min_z == INF:
+		return {}
+
+	var base_width: float = max_x - min_x
+	var base_depth: float = max_z - min_z
+	var margin_x: float = base_width * water_surface_margin_ratio
+	var margin_z: float = base_depth * water_surface_margin_ratio
+	var expanded_width: float = base_width + (margin_x * 2.0)
+	var expanded_depth: float = base_depth + (margin_z * 2.0)
+	var center: Vector3 = Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
+
+	return {
+		"center": center,
+		"size": Vector2(expanded_width, expanded_depth)
+	}
 
 
 ## Converts a continuous depth level into the world-space terrain height.

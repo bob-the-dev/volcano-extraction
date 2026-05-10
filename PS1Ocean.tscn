@@ -1,0 +1,47 @@
+[gd_scene format=3 uid="uid://cx8134cg3vyva"]
+
+[ext_resource type="Material" uid="uid://dnokpgg4edfw7" path="res://shaders/psOneLava.tres" id="1_3v432"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_ktfdw"]
+size = Vector2(32, 32)
+subdivide_width = 64
+subdivide_depth = 64
+
+[sub_resource type="TorusMesh" id="TorusMesh_kxo6c"]
+inner_radius = 2.5
+outer_radius = 5.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3v432"]
+albedo_color = Color(1, 0.6117647, 0, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_3v432"]
+size = Vector3(3, 36.01, 3)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_aywab"]
+albedo_color = Color(0.6431373, 0, 0, 1)
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_6p20i"]
+size = Vector2(32, 32)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_nhl60"]
+
+[node name="Ocean" type="Node3D" unique_id=277842861]
+
+[node name="Ocean" type="MeshInstance3D" parent="." unique_id=1199672925]
+material_override = ExtResource("1_3v432")
+mesh = SubResource("PlaneMesh_ktfdw")
+
+[node name="Torus" type="MeshInstance3D" parent="." unique_id=1913469010]
+transform = Transform3D(1, 0, 0, 0, 0.86602545, -0.50000006, 0, 0.50000006, 0.86602545, 0, -0.5672357, 0)
+mesh = SubResource("TorusMesh_kxo6c")
+surface_material_override/0 = SubResource("StandardMaterial3D_3v432")
+
+[node name="Cube" type="MeshInstance3D" parent="." unique_id=1970050490]
+transform = Transform3D(0.8660254, -1.4901161e-08, -0.5, 0, 1, -2.9802322e-08, 0.5, 2.5809568e-08, 0.8660254, -0.5677686, -13.053537, 7.616332)
+mesh = SubResource("BoxMesh_3v432")
+surface_material_override/0 = SubResource("StandardMaterial3D_aywab")
+
+[node name="Plane" type="MeshInstance3D" parent="." unique_id=603464182]
+transform = Transform3D(1, 0, 0, 0, 1, -2.9802322e-08, 0, 2.9802322e-08, 1, -0.24461794, -2.1073442, 0.18412876)
+mesh = SubResource("PlaneMesh_6p20i")
+surface_material_override/0 = SubResource("StandardMaterial3D_nhl60")

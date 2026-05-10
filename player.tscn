@@ -1,4 +1,4 @@
-[gd_scene load_steps=35 format=4 uid="uid://bknmich6p0hft"]
+[gd_scene format=4 uid="uid://bknmich6p0hft"]
 
 [ext_resource type="Script" uid="uid://fungybo3qrvq" path="res://scripts/Player.gd" id="2_i3pqv"]
 [ext_resource type="Material" uid="uid://cu0cc4f3182h3" path="res://materials/player.tres" id="3_i3pqv"]
@@ -2141,22 +2141,22 @@ _data = {
 &"walk": SubResource("Animation_tqwh8")
 }
 
-[node name="Player" type="CharacterBody3D"]
+[node name="Player" type="CharacterBody3D" unique_id=2083504003]
 floor_constant_speed = true
 floor_max_angle = 0.30543262
 script = ExtResource("2_i3pqv")
 
-[node name="CollisionShape3D2" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D2" type="CollisionShape3D" parent="." unique_id=848836983]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0, 0)
 shape = SubResource("ConvexPolygonShape3D_i3pqv")
 
-[node name="CollisionShape3D3" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D3" type="CollisionShape3D" parent="." unique_id=428209790]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0, 0)
 shape = SubResource("ConvexPolygonShape3D_hqtel")
 
-[node name="character-human" type="Node3D" parent="."]
+[node name="character-human" type="Node3D" parent="." unique_id=304928736]
 
-[node name="Skeleton3D" type="Skeleton3D" parent="character-human"]
+[node name="Skeleton3D" type="Skeleton3D" parent="character-human" unique_id=1477244688]
 bones/0/name = "root"
 bones/0/parent = -1
 bones/0/rest = Transform3D(1, -1.8054319e-15, 8.498073e-08, -4.7141987e-15, 0.99999994, 7.671892e-08, -8.4980734e-08, -7.671892e-08, 0.99999994, 0, 0, 0)
@@ -2207,23 +2207,23 @@ bones/6/position = Vector3(-9.821048e-10, 0.16699998, 0.026388874)
 bones/6/rotation = Quaternion(-4.440892e-15, -1.5506867e-09, -5.2939556e-23, 1)
 bones/6/scale = Vector3(1, 1, 1)
 
-[node name="body-mesh" type="MeshInstance3D" parent="character-human/Skeleton3D"]
+[node name="body-mesh" type="MeshInstance3D" parent="character-human/Skeleton3D" unique_id=917241197]
 material_override = ExtResource("3_i3pqv")
 mesh = SubResource("ArrayMesh_ahxd8")
 skin = SubResource("Skin_d8d7d")
 
-[node name="head-mesh" type="MeshInstance3D" parent="character-human/Skeleton3D"]
+[node name="head-mesh" type="MeshInstance3D" parent="character-human/Skeleton3D" unique_id=887493566]
 material_override = ExtResource("3_i3pqv")
 mesh = SubResource("ArrayMesh_4mywg")
 skin = SubResource("Skin_d8d7d")
 
-[node name="LeftArmLightAttachment" type="BoneAttachment3D" parent="character-human/Skeleton3D"]
+[node name="LeftArmLightAttachment" type="BoneAttachment3D" parent="character-human/Skeleton3D" unique_id=491142818]
 transform = Transform3D(1, -2.0362789e-15, 3.7216648e-08, -1.0497901e-15, 0.99999994, 8.29217e-08, -3.7216658e-08, -8.29217e-08, 0.99999994, 0.09989679, 0.28774998, -0.0122499745)
 bone_name = "arm-left"
 bone_idx = 4
 
-[node name="SpotLight3D" type="SpotLight3D" parent="character-human/Skeleton3D/LeftArmLightAttachment"]
-transform = Transform3D(-0.33216116, 0.94322264, 8.733957e-08, 0.94232494, 0.33184502, -0.043619387, -0.04114282, -0.014488583, -0.99904823, 0.11, 0, 0.02)
+[node name="SpotLight3D" type="SpotLight3D" parent="character-human/Skeleton3D/LeftArmLightAttachment" unique_id=845300304]
+transform = Transform3D(-0.3321612, 0.94322264, 8.857697e-08, 0.94232494, 0.33184502, -0.04361939, -0.04114282, -0.014488583, -0.99904823, 0.11, 0, 0.12305072)
 light_energy = 6.0
 light_indirect_energy = 0.1
 light_volumetric_fog_energy = 0.0
@@ -2232,7 +2232,5 @@ spot_range = 10.0
 spot_angle = 38.0
 spot_angle_attenuation = 0.8
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
-libraries = {
-&"": SubResource("AnimationLibrary_3sg01")
-}
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=1198963158]
+libraries/ = SubResource("AnimationLibrary_3sg01")
