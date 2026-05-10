@@ -942,6 +942,11 @@ func _spawn_deepest_point_scenes() -> void:
 			spawned_node.rotation.y = base_yaw
 			_floating_deepest_point_nodes.append(spawned_node)
 		_spawned_objects.append(spawned_node)
+
+	print("[Deepest Spawn] Spawned ", _lava_sources.size(), " scene instances")
+
+
+func _resolve_deepest_point_material_override() -> Material:
 	if deepest_point_match_player_material:
 		var player_node: Node = NodeUtils.find_node(self, "player", ["../Player"], "Player.gd")
 		if player_node != null:
@@ -971,8 +976,6 @@ func _find_first_material_override_in_subtree(current_node: Node) -> Material:
 			return child_material
 
 	return null
-
-	print("[Deepest Spawn] Spawned ", _lava_sources.size(), " scene instances")
 
 
 
