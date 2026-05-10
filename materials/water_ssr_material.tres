@@ -1,0 +1,56 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://dl7f3lbnvxlda"]
+
+[ext_resource type="Shader" uid="uid://bq11fagql2gd4" path="res://materials/water_ssr.gdshader" id="1_water_shader"]
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_wave_a"]
+seed = 11
+frequency = 0.03
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_wave_a"]
+noise = SubResource("FastNoiseLite_wave_a")
+seamless = true
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_wave_b"]
+seed = 37
+frequency = 0.055
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_wave_b"]
+noise = SubResource("FastNoiseLite_wave_b")
+seamless = true
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_water_shader")
+shader_parameter/color_shallow = Color(0.38, 0.08, 0.05, 1)
+shader_parameter/color_deep = Color(0.1, 0.01, 0.01, 1)
+shader_parameter/transparency = 0.6
+shader_parameter/metallic = 0.0
+shader_parameter/roughness = 0.18
+shader_parameter/max_visible_depth = 8.0
+shader_parameter/wave_move_direction_a = Vector2(-1, 0)
+shader_parameter/wave_move_direction_b = Vector2(0, 1)
+shader_parameter/wave_noise_scale_a = 15.0
+shader_parameter/wave_noise_scale_b = 12.455
+shader_parameter/wave_time_scale_a = 0.13
+shader_parameter/wave_time_scale_b = 0.145
+shader_parameter/wave_height_scale = 0.09
+shader_parameter/wave_normal_flatness = 46.0
+shader_parameter/surface_normals_a = SubResource("NoiseTexture2D_wave_a")
+shader_parameter/surface_normals_b = SubResource("NoiseTexture2D_wave_b")
+shader_parameter/surface_normals_move_direction_a = Vector2(-1, 0.25)
+shader_parameter/surface_normals_move_direction_b = Vector2(0.25, 1)
+shader_parameter/surface_texture_roughness = 0.08
+shader_parameter/surface_texture_scale = 0.08
+shader_parameter/surface_texture_time_scale = 0.05
+shader_parameter/ssr_resolution = 2.0
+shader_parameter/ssr_max_travel = 18.0
+shader_parameter/ssr_max_diff = 3.0
+shader_parameter/ssr_mix_strength = 0.32
+shader_parameter/ssr_screen_border_fadeout = 0.3
+shader_parameter/refraction_intensity = 0.18
+shader_parameter/border_color = Color(1, 1, 1, 1)
+shader_parameter/border_scale = 0.91999997943616
+shader_parameter/border_near = 0.5
+shader_parameter/border_far = 300.0
+shader_parameter/cut_out_x = 0.0
+shader_parameter/cut_out_z = 0.0

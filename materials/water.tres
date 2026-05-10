@@ -1,0 +1,12 @@
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://ddk1eq0sx1km3"]
+
+[resource]
+transparency = 1
+diffuse_mode = 1
+albedo_color = Color(0.3133561, 0.05579225, 0.06820653, 0.2784314)
+roughness = 0.28
+emission_enabled = true
+emission = Color(0.9673981, 0.43965685, 0.37030503, 1)
+emission_energy_multiplier = 2.21
+heightmap_scale = 9.8
+refraction_scale = 0.21

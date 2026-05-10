@@ -62,7 +62,7 @@ class Cell:
 ## Number of rooms to designate as highground (depth 0 centers)
 @export var num_highground: int = 1
 ## Influence radius for depth sources (in cells)
-@export var depth_source_influence: float = 8.0
+@export var depth_source_influence: float = 4.0
 ## Wall proximity bias strength (higher = stronger bias to 0 near walls)
 @export var wall_bias_strength: float = 2.0
 ## Height per depth step - player can step up 1 level (0.15 = standard stair height)
@@ -85,6 +85,36 @@ class Cell:
 @export var render_floor_tiles: bool = false
 ## Use layered depth rendering for base mesh
 @export var use_layered_depth: bool = true
+
+@export_group("Scene Spawns")
+## Optional scene to place at each deepest walkable source cell.
+@export var deepest_point_scene: PackedScene = preload("res://fatguy.gltf")
+## Uniform scale applied to spawned deepest-point scenes.
+@export var deepest_point_scene_scale: Vector3 = Vector3(8.909, 8.909, 8.909)
+## Extra world-space height added after sampling the terrain surface.
+@export var deepest_point_scene_height_offset: float = 0.0
+
+@export_group("Water")
+## Spawn a translucent water volume over submerged terrain.
+@export var render_water: bool = true
+## Water surface height in depth levels, where 0 is highest and 4 is lowest.
+@export_range(0.0, 4.0, 0.05) var water_height_level: float = 3.0
+## Amount to move the water height per button press, measured in depth levels.
+@export_range(0.05, 1.0, 0.05) var water_height_step_levels: float = 0.25
+## Interpolation speed used when animating the visible water height toward the target level.
+@export_range(0.5, 20.0, 0.1) var water_height_lerp_speed: float = 6.0
+## Lift the water surface slightly to avoid z-fighting on the waterline.
+@export var water_surface_offset: float = 0.02
+## Extend the water volume below the lowest terrain level.
+@export var water_bottom_padding: float = 0.6
+## Inset the outer perimeter slightly so water does not clip through walls.
+@export var water_edge_inset: float = 0.08
+## Optional material override for the generated water volume.
+@export var water_material: Material
+## Base color and transparency for the fallback generated water material.
+@export var water_color: Color = Color(0.08, 0.33, 0.46, 0.5)
+## Emission tint to keep water readable in darker areas for the fallback material.
+@export var water_emission_color: Color = Color(0.04, 0.18, 0.28, 1.0)
 
 @export_group("Debug")
 @export var show_grid_debug: bool = true
@@ -110,6 +140,9 @@ var _highground_positions: Array[Vector2] = []
 var _is_regenerating: bool = false
 var _heightmap_texture: ImageTexture
 var _heightmap_image: Image  # Store heightmap image for collision generation
+var _water_volume: MeshInstance3D
+var _displayed_water_height_level: float = 3.0
+var _target_water_height_level: float = 3.0
 
 # Materials
 var _base_material: StandardMaterial3D
@@ -123,6 +156,7 @@ var num_rooms: int = 12
 func _ready() -> void:
 	# Add to group for easy lookup
 	add_to_group("procedural_map")
+	_sync_water_height_state()
 	
 	_wall_scene = load("res://procedural_wall.tscn")
 	_floor_tile_scene = load("res://procedural_floor_tile.tscn")
@@ -134,15 +168,21 @@ func _ready() -> void:
 		_regenerate_map()
 
 
+func _process(delta: float) -> void:
+	_update_water_height_animation(delta)
+
+
 ## Regenerates the entire map.
 func _regenerate_map() -> void:
 	if _is_regenerating:
 		return
 	
 	_is_regenerating = true
+	_sync_water_height_state()
 	_clear_map()
 	_generate_map()
 	_spawn_geometry()
+	_spawn_deepest_point_scenes()
 	_place_player_on_floor()
 	_is_regenerating = false
 	
@@ -160,6 +200,7 @@ func _clear_map() -> void:
 		if is_instance_valid(obj):
 			obj.queue_free()
 	_spawned_objects.clear()
+	_water_volume = null
 	_rooms.clear()
 	_cells.clear()
 	_lava_cells.clear()
@@ -345,6 +386,7 @@ func _spawn_geometry() -> void:
 	
 	# Spawn custom base mesh that follows map outline
 	_spawn_base_mesh()
+	_spawn_water_volume()
 	
 	for cell in _cells:
 		var world_pos := _cell_to_world(cell.position)
@@ -733,6 +775,304 @@ func _spawn_base_mesh() -> void:
 	print("[Heightmap Terrain] Created terrain mesh with heightmap texture")
 
 
+## Spawns the configured scene at each deepest walkable source cell.
+func _spawn_deepest_point_scenes() -> void:
+	if deepest_point_scene == null:
+		return
+
+	if _lava_sources.is_empty():
+		return
+
+	for source_grid_pos in _lava_sources:
+		var source_cell: Cell = _get_cell_at(source_grid_pos)
+		if source_cell == null:
+			push_warning("[Deepest Spawn] Missing cell for source at ", source_grid_pos)
+			continue
+
+		var spawned_node: Node3D = deepest_point_scene.instantiate() as Node3D
+		if spawned_node == null:
+			push_warning("[Deepest Spawn] Configured scene root must inherit Node3D")
+			return
+
+		add_child(spawned_node)
+		spawned_node.position = _get_cell_surface_position(source_cell) + Vector3(0.0, deepest_point_scene_height_offset, 0.0)
+		spawned_node.scale = deepest_point_scene_scale
+		spawned_node.add_to_group("deepest_point_scene")
+		_spawned_objects.append(spawned_node)
+
+	print("[Deepest Spawn] Spawned ", _lava_sources.size(), " scene instances")
+
+
+## Spawns a translucent water volume that fills terrain up to the configured depth level.
+func _spawn_water_volume() -> void:
+	_remove_water_volume()
+
+	if not render_water or not use_layered_depth:
+		return
+
+	var clamped_water_level: float = clampf(_displayed_water_height_level, 0.0, 4.0)
+	var surface_y: float = _get_depth_level_world_height(clamped_water_level) + water_surface_offset
+	var submerged_lookup: Dictionary = {}
+	var submerged_cells: Array[Cell] = []
+	for cell in _cells:
+		if not cell.is_floor:
+			continue
+
+		var cell_surface_y: float = _get_depth_world_height(cell.depth)
+		if cell_surface_y <= surface_y + 0.001:
+			var cell_key: Vector2i = Vector2i(int(cell.position.x), int(cell.position.y))
+			submerged_lookup[cell_key] = true
+			submerged_cells.append(cell)
+
+	if submerged_cells.is_empty():
+		print("[Water] No submerged cells at water level ", clamped_water_level)
+		return
+
+	var bottom_y: float = _get_depth_world_height(4) - water_bottom_padding
+	if surface_y <= bottom_y:
+		push_warning("[Water] Water surface height is below the water bottom; skipping water volume")
+		return
+
+	var surface_tool: SurfaceTool = SurfaceTool.new()
+	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	var half_cell: float = cell_size * 0.5
+	var max_inset: float = minf(water_edge_inset, half_cell * 0.45)
+	var render_surface_only: bool = _should_render_water_surface_only()
+
+	for cell in submerged_cells:
+		var grid_x: int = int(cell.position.x)
+		var grid_y: int = int(cell.position.y)
+		var left_key: Vector2i = Vector2i(grid_x - 1, grid_y)
+		var right_key: Vector2i = Vector2i(grid_x + 1, grid_y)
+		var top_key: Vector2i = Vector2i(grid_x, grid_y - 1)
+		var bottom_key: Vector2i = Vector2i(grid_x, grid_y + 1)
+
+		var inset_left: float = max_inset if not submerged_lookup.has(left_key) else 0.0
+		var inset_right: float = max_inset if not submerged_lookup.has(right_key) else 0.0
+		var inset_top: float = max_inset if not submerged_lookup.has(top_key) else 0.0
+		var inset_bottom: float = max_inset if not submerged_lookup.has(bottom_key) else 0.0
+
+		var world_pos: Vector3 = _cell_to_world(cell.position)
+		var min_x: float = world_pos.x - half_cell + inset_left
+		var max_x: float = world_pos.x + half_cell - inset_right
+		var min_z: float = world_pos.z - half_cell + inset_top
+		var max_z: float = world_pos.z + half_cell - inset_bottom
+
+		if min_x >= max_x or min_z >= max_z:
+			continue
+
+		var nw_top: Vector3 = Vector3(min_x, surface_y, min_z)
+		var ne_top: Vector3 = Vector3(max_x, surface_y, min_z)
+		var sw_top: Vector3 = Vector3(min_x, surface_y, max_z)
+		var se_top: Vector3 = Vector3(max_x, surface_y, max_z)
+
+		var nw_bottom: Vector3 = Vector3(min_x, bottom_y, min_z)
+		var ne_bottom: Vector3 = Vector3(max_x, bottom_y, min_z)
+		var sw_bottom: Vector3 = Vector3(min_x, bottom_y, max_z)
+		var se_bottom: Vector3 = Vector3(max_x, bottom_y, max_z)
+
+		# Top face
+		surface_tool.add_vertex(nw_top)
+		surface_tool.add_vertex(sw_top)
+		surface_tool.add_vertex(ne_top)
+		surface_tool.add_vertex(ne_top)
+		surface_tool.add_vertex(sw_top)
+		surface_tool.add_vertex(se_top)
+
+		if render_surface_only:
+			continue
+
+		# Bottom face
+		surface_tool.add_vertex(nw_bottom)
+		surface_tool.add_vertex(ne_bottom)
+		surface_tool.add_vertex(sw_bottom)
+		surface_tool.add_vertex(ne_bottom)
+		surface_tool.add_vertex(se_bottom)
+		surface_tool.add_vertex(sw_bottom)
+
+		# North edge
+		if not submerged_lookup.has(top_key):
+			surface_tool.add_vertex(nw_top)
+			surface_tool.add_vertex(ne_top)
+			surface_tool.add_vertex(nw_bottom)
+			surface_tool.add_vertex(ne_top)
+			surface_tool.add_vertex(ne_bottom)
+			surface_tool.add_vertex(nw_bottom)
+
+		# South edge
+		if not submerged_lookup.has(bottom_key):
+			surface_tool.add_vertex(sw_top)
+			surface_tool.add_vertex(sw_bottom)
+			surface_tool.add_vertex(se_top)
+			surface_tool.add_vertex(se_top)
+			surface_tool.add_vertex(sw_bottom)
+			surface_tool.add_vertex(se_bottom)
+
+		# West edge
+		if not submerged_lookup.has(left_key):
+			surface_tool.add_vertex(nw_top)
+			surface_tool.add_vertex(nw_bottom)
+			surface_tool.add_vertex(sw_top)
+			surface_tool.add_vertex(sw_top)
+			surface_tool.add_vertex(nw_bottom)
+			surface_tool.add_vertex(sw_bottom)
+
+		# East edge
+		if not submerged_lookup.has(right_key):
+			surface_tool.add_vertex(ne_top)
+			surface_tool.add_vertex(se_top)
+			surface_tool.add_vertex(ne_bottom)
+			surface_tool.add_vertex(se_top)
+			surface_tool.add_vertex(se_bottom)
+			surface_tool.add_vertex(ne_bottom)
+
+	surface_tool.generate_normals()
+	var water_mesh: ArrayMesh = surface_tool.commit()
+	if water_mesh == null:
+		push_warning("[Water] Failed to generate water mesh")
+		return
+
+	var water_instance: MeshInstance3D = MeshInstance3D.new()
+	water_instance.mesh = water_mesh
+	water_instance.material_override = _create_water_material()
+	water_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	water_instance.extra_cull_margin = 1000.0
+	water_instance.add_to_group("water_volume")
+	_water_volume = water_instance
+
+	add_child(water_instance)
+	_spawned_objects.append(water_instance)
+
+	print("[Water] Spawned water volume for ", submerged_cells.size(), " cells at level ", clamped_water_level)
+
+
+## Creates the material used by the generated water volume.
+func _create_water_material() -> Material:
+	if water_material != null:
+		return water_material
+
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = water_color
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.roughness = 0.08
+	material.metallic = 0.02
+	material.emission_enabled = true
+	material.emission = water_emission_color
+	material.emission_energy_multiplier = 0.35
+	material.refraction_enabled = true
+	material.refraction_scale = 0.02
+	return material
+
+
+## Returns whether the current water material expects a top surface instead of a closed volume.
+func _should_render_water_surface_only() -> bool:
+	return water_material is ShaderMaterial
+
+
+## Raises the water surface by one configured step.
+func raise_water_height() -> float:
+	return set_water_height_level(water_height_level - water_height_step_levels)
+
+
+## Lowers the water surface by one configured step.
+func lower_water_height() -> float:
+	return set_water_height_level(water_height_level + water_height_step_levels)
+
+
+## Sets the water surface height in depth levels and refreshes the water mesh.
+func set_water_height_level(new_level: float) -> float:
+	var clamped_level: float = clampf(new_level, 0.0, 4.0)
+	if is_equal_approx(clamped_level, _target_water_height_level):
+		return _target_water_height_level
+
+	water_height_level = clamped_level
+	_target_water_height_level = clamped_level
+	if _cells.is_empty():
+		_displayed_water_height_level = clamped_level
+	return _target_water_height_level
+
+
+## Returns the current water height in depth levels.
+func get_water_height_level() -> float:
+	return _displayed_water_height_level
+
+
+## Returns the current target water height in depth levels.
+func get_target_water_height_level() -> float:
+	return _target_water_height_level
+
+
+## Removes and rebuilds only the water mesh for runtime height updates.
+func _refresh_water_volume() -> void:
+	if _cells.is_empty():
+		return
+
+	_spawn_water_volume()
+
+
+## Synchronizes the water target and displayed level from the exported value.
+func _sync_water_height_state() -> void:
+	var clamped_level: float = clampf(water_height_level, 0.0, 4.0)
+	water_height_level = clamped_level
+	_target_water_height_level = clamped_level
+	_displayed_water_height_level = clamped_level
+
+
+## Animates the visible water level toward the target and refreshes the water mesh.
+func _update_water_height_animation(delta: float) -> void:
+	if _cells.is_empty() or not render_water or not use_layered_depth:
+		return
+
+	if is_equal_approx(_displayed_water_height_level, _target_water_height_level):
+		return
+
+	var lerp_weight: float = minf(1.0, water_height_lerp_speed * delta)
+	var next_water_level: float = lerpf(_displayed_water_height_level, _target_water_height_level, lerp_weight)
+	if absf(next_water_level - _target_water_height_level) <= 0.01:
+		next_water_level = _target_water_height_level
+
+	if is_equal_approx(next_water_level, _displayed_water_height_level):
+		return
+
+	_displayed_water_height_level = next_water_level
+	_refresh_water_volume()
+
+
+## Removes the current water volume if one is present.
+func _remove_water_volume() -> void:
+	if _water_volume == null:
+		return
+
+	if _spawned_objects.has(_water_volume):
+		_spawned_objects.erase(_water_volume)
+
+	if is_instance_valid(_water_volume):
+		_water_volume.queue_free()
+
+	_water_volume = null
+
+
+## Converts a discrete depth level into the world-space terrain height.
+func _get_depth_world_height(depth: int) -> float:
+	return _get_depth_level_world_height(float(depth))
+
+
+## Converts a continuous depth level into the world-space terrain height.
+func _get_depth_level_world_height(depth_level: float) -> float:
+	var clamped_depth_level: float = clampf(depth_level, 0.0, 4.0)
+	var max_displacement: float = _get_max_terrain_displacement()
+	var normalized_height: float = 1.0 - (clamped_depth_level / 4.0)
+	return floor_height - max_displacement + (normalized_height * max_displacement)
+
+
+## Returns the maximum terrain height displacement used by the terrain mesh.
+func _get_max_terrain_displacement() -> float:
+	return depth_step_height * 4.0 * heightmap_displacement_amplitude
+
+
 ## Creates a collision-only trimesh that matches the displayed terrain surface.
 func _create_terrain_collision_shape(playable_width: float, playable_height: float, grid_width: int, grid_height: int) -> Shape3D:
 	if _heightmap_image == null:
@@ -1006,8 +1346,6 @@ func _create_terrain_displacement_material() -> ShaderMaterial:
 	var wall_roughness: float = 0.0
 	var wall_metallic: float = 0.0
 	var wall_metallic_specular: float = 0.0
-	var wall_refraction_enabled: bool = false
-	var wall_refraction_scale: float = 0.0
 	
 	if _base_material:
 		wall_albedo = _base_material.albedo_color
@@ -1017,10 +1355,7 @@ func _create_terrain_displacement_material() -> ShaderMaterial:
 		wall_roughness = _base_material.roughness
 		wall_metallic = _base_material.metallic
 		wall_metallic_specular = _base_material.metallic_specular
-		if _base_material.refraction_enabled:
-			wall_refraction_enabled = true
-			wall_refraction_scale = _base_material.refraction_scale
-	
+
 	# Complete shader with displacement AND material
 	shader.code = """
 shader_type spatial;
@@ -1234,17 +1569,51 @@ func _place_player_on_floor() -> void:
 	if _highground_positions.size() > 0:
 		# Place on a random highground position
 		var highground_index: int = _rng.randi_range(0, _highground_positions.size() - 1)
-		spawn_pos = _cell_to_world(_highground_positions[highground_index])
-		spawn_pos.y = floor_height + 1.0
+		var highground_cell: Cell = _get_cell_at(_highground_positions[highground_index])
+		if highground_cell == null:
+			push_warning("[Player Spawn] Highground cell missing; falling back to random floor")
+			var fallback_cell: Cell = _floor_cells[_rng.randi_range(0, _floor_cells.size() - 1)]
+			spawn_pos = _get_cell_surface_position(fallback_cell)
+		else:
+			spawn_pos = _get_cell_surface_position(highground_cell)
+		spawn_pos.y += 1.0
 		print("[Player Spawn] Placed on highground at: ", spawn_pos)
 	else:
 		# Fallback to random floor tile if no highground
-		var random_cell := _floor_cells[_rng.randi_range(0, _floor_cells.size() - 1)]
-		spawn_pos = _cell_to_world(random_cell.position)
-		spawn_pos.y = floor_height + 1.0
+		var random_cell: Cell = _floor_cells[_rng.randi_range(0, _floor_cells.size() - 1)]
+		spawn_pos = _get_cell_surface_position(random_cell)
+		spawn_pos.y += 1.0
 		print("[Player Spawn] Placed at random floor: ", spawn_pos)
 	
 	player.position = spawn_pos
+
+
+## Returns the sampled terrain surface position at the center of a cell.
+func _get_cell_surface_position(cell: Cell) -> Vector3:
+	var world_pos: Vector3 = _cell_to_world(cell.position)
+	world_pos.y = _get_world_surface_height(Vector2(world_pos.x, world_pos.z))
+	return world_pos
+
+
+## Samples the generated terrain height at a world-space XZ position.
+func _get_world_surface_height(world_xz: Vector2) -> float:
+	if not use_layered_depth or _heightmap_image == null:
+		return floor_height
+
+	var grid_width: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
+	var grid_height: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
+	var playable_width: float = grid_width * cell_size
+	var playable_height: float = grid_height * cell_size
+	if playable_width <= 0.0 or playable_height <= 0.0:
+		return floor_height
+
+	var offset: float = edge_margin * cell_size
+	var uv: Vector2 = Vector2(
+		(world_xz.x - offset) / playable_width,
+		(world_xz.y - offset) / playable_height
+	)
+	var height_value: float = _sample_heightmap_bilinear(_heightmap_image, uv)
+	return (floor_height - _get_max_terrain_displacement()) + (height_value * _get_max_terrain_displacement())
 
 
 ## Helper: Check if world position is in a room (floor).

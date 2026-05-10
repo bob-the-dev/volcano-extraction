@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3 uid="uid://bgjs7cfay65c2"]
+[gd_scene format=3 uid="uid://bgjs7cfay65c2"]
 
 [ext_resource type="PackedScene" uid="uid://bknmich6p0hft" path="res://player.tscn" id="2_0xm2m"]
 [ext_resource type="Script" uid="uid://bd046eokvcnu2" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="2_1bvp3"]
@@ -6,6 +6,8 @@
 [ext_resource type="Script" uid="uid://8umksf8e80fw" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="3_1bvp3"]
 [ext_resource type="Script" uid="uid://djs5e7lkbo60e" path="res://scripts/procedural_map.gd" id="7_5vw27"]
 [ext_resource type="Script" uid="uid://lvdibt8falnc" path="res://scripts/Minimap.gd" id="8_minimap"]
+[ext_resource type="Script" uid="uid://cjwi6sdjl523b" path="res://scripts/WaterControls.gd" id="9_water_controls"]
+[ext_resource type="Material" uid="uid://dl7f3lbnvxlda" path="res://materials/water_ssr_material.tres" id="10_water_material"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_as1t3"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
@@ -23,18 +25,18 @@ glow_enabled = true
 [sub_resource type="Resource" id="Resource_lquwl"]
 script = ExtResource("3_1bvp3")
 
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node3D" unique_id=1074138897]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=125481326]
 environment = SubResource("Environment_c5lsl")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=886841073]
 transform = Transform3D(-0.29570797, -0.554733, 0.777707, 0, 0.8141155, 0.58070296, -0.95527834, 0.17171851, -0.24074048, 0, 0, 0)
 shadow_enabled = true
 shadow_blur = 5.5
 
-[node name="Player" parent="." instance=ExtResource("2_0xm2m")]
-transform = Transform3D(3, 0, 0, 0, 3, 0, 0, 0, 3, -2.9500206, 0, -0.06919098)
+[node name="Player" parent="." unique_id=790875423 instance=ExtResource("2_0xm2m")]
+transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -2.9500206, 0, -0.06919098)
 wall_min_slide_angle = 0.10471976
 hover_color = Color(0.7285387, 0.33243695, 0.53048784, 0.050980393)
 target_color = Color(0.4284812, 0.27790415, 0.32941735, 0.6117647)
@@ -42,52 +44,88 @@ highlight_emission = 0.005
 click_effect_color = Color(0.17897373, 0.0957414, 0.032924913, 1)
 click_particle_count = 45
 
-[node name="Camera3D" type="Camera3D" parent="."]
+[node name="Procedural Map" type="Node3D" parent="." unique_id=1594020206]
+transform = Transform3D(1, 0, 0, 0, 1, 1.4901161e-08, 0, 0, 1, 0, 0, 2.3841858e-07)
+script = ExtResource("7_5vw27")
+median_rooms = 20
+random_seed = 11670
+num_lava_sources = 3
+num_highground = 2
+depth_source_influence = 5.0
+wall_bias_strength = 3.0
+pixels_per_cell = 16
+blur_radius = 8
+mesh_subdivisions = 4
+heightmap_displacement_amplitude = 3.0
+export_heightmap_debug = true
+water_height_level = 2.1
+water_height_lerp_speed = 3.0
+water_material = ExtResource("10_water_material")
+show_grid_debug = false
+show_depth_labels = false
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1376038959]
 physics_interpolation_mode = 1
-transform = Transform3D(0.9999975, 0, 0, 0, 0.24530628, 0.96944314, 0, -0.9694409, 0.24530686, -2.9500206, 13.57, -0.06919098)
-v_offset = -4.58
+transform = Transform3D(0.7071044, -0.5336562, 0.46390086, 0, 0.656054, 0.7547048, -0.7071044, -0.5336562, 0.46390086, -1.6850206, 11.095, 0.23080903)
+v_offset = -5.65
 doppler_tracking = 2
 current = true
-fov = 68.3
+fov = 66.0
 
-[node name="PhantomCameraHost" type="Node" parent="Camera3D"]
+[node name="PhantomCameraHost" type="Node" parent="Camera3D" unique_id=251057525]
 process_priority = 300
 process_physics_priority = 300
 script = ExtResource("2_1bvp3")
 metadata/_custom_type_script = "uid://bd046eokvcnu2"
 
-[node name="PhantomCamera3D" type="Node3D" parent="." node_paths=PackedStringArray("follow_target")]
-transform = Transform3D(0.9999975, 0, 0, 0, 0.24530628, 0.96944314, 0, -0.9694409, 0.24530686, -2.9500206, 13.57, -0.06919098)
+[node name="PhantomCamera3D" type="Node3D" parent="." unique_id=14269990 node_paths=PackedStringArray("follow_target")]
+transform = Transform3D(0.7071044, -0.5336562, 0.46390086, 0, 0.656054, 0.7547048, -0.7071044, -0.5336562, 0.46390086, -1.6850206, 11.095, 0.23080903)
 top_level = true
 script = ExtResource("2_h2yge")
 follow_mode = 2
 follow_target = NodePath("../Player")
 look_at_mode = 1
 tween_resource = SubResource("Resource_lquwl")
-follow_offset = Vector3(0, 13.57, 0)
+follow_offset = Vector3(1.265, 11.095, 0.3)
 follow_damping = true
-follow_damping_value = Vector3(0.33, 0.33, 0.33)
+follow_damping_value = Vector3(0.245, 0.245, 0.245)
 follow_distance = 3.65
 spring_length = 3.65
 _preview_noise = false
 
-[node name="Procedural Map" type="Node3D" parent="."]
-script = ExtResource("7_5vw27")
-median_rooms = 20
-random_seed = 11670
-num_lava_sources = 3
-num_highground = 2
-pixels_per_cell = 10
-blur_radius = 3
-mesh_subdivisions = 4
-heightmap_displacement_amplitude = 2.604
-export_heightmap_debug = true
-show_grid_debug = false
-show_depth_labels = false
+[node name="HUD" type="CanvasLayer" parent="." unique_id=289701640]
 
-[node name="HUD" type="CanvasLayer" parent="."]
+[node name="WaterControls" type="PanelContainer" parent="HUD" unique_id=1333429544]
+visible = false
+offset_right = 263.0
+offset_bottom = 52.0
+script = ExtResource("9_water_controls")
 
-[node name="Minimap" type="Control" parent="HUD"]
+[node name="MarginContainer" type="MarginContainer" parent="HUD/WaterControls" unique_id=330288455]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="HUD/WaterControls/MarginContainer" unique_id=561701933]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="RaiseButton" type="Button" parent="HUD/WaterControls/MarginContainer/HBoxContainer" unique_id=55717153]
+layout_mode = 2
+text = "Raise Water"
+
+[node name="ValueLabel" type="Label" parent="HUD/WaterControls/MarginContainer/HBoxContainer" unique_id=331580416]
+layout_mode = 2
+text = "Water 3.00"
+vertical_alignment = 1
+
+[node name="LowerButton" type="Button" parent="HUD/WaterControls/MarginContainer/HBoxContainer" unique_id=140533573]
+layout_mode = 2
+text = "Lower Water"
+
+[node name="Minimap" type="Control" parent="HUD" unique_id=2120884738]
 layout_mode = 3
 anchors_preset = 0
 script = ExtResource("8_minimap")
