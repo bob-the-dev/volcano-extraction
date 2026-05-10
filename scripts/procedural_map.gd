@@ -89,12 +89,34 @@ class Cell:
 @export_group("Scene Spawns")
 ## Optional scene to place at each deepest walkable source cell.
 @export var deepest_point_scene: PackedScene = preload("res://fatguy.gltf")
-## Optional opaque material override for procedurally spawned deepest-point meshes.
-@export var deepest_point_material_override: Material = preload("res://materials/deepest_point_surface.tres")
+## Fallback material override for procedurally spawned deepest-point meshes when the player material cannot be resolved.
+@export var deepest_point_material_override: Material = preload("res://materials/player.tres")
+## Match procedurally spawned deepest-point meshes to the live player material when available.
+@export var deepest_point_match_player_material: bool = true
 ## Uniform scale applied to spawned deepest-point scenes.
 @export var deepest_point_scene_scale: Vector3 = Vector3(8.909, 8.909, 8.909)
 ## Extra world-space height added after sampling the terrain surface.
 @export var deepest_point_scene_height_offset: float = 0.0
+## Keep deepest-point scenes afloat on the generated water surface.
+@export var deepest_point_float_on_water: bool = true
+## Disable physics collision on procedurally spawned deepest-point scenes.
+@export var deepest_point_scene_disable_collision: bool = true
+## Extra vertical offset from the water surface for floating deepest-point scenes. Negative values sink them deeper.
+@export var deepest_point_water_float_offset: float = -0.08
+## Vertical bob amplitude used to sell buoyancy.
+@export_range(0.0, 1.0, 0.01) var deepest_point_bob_amplitude: float = 0.08
+## Bob speed used for floating deepest-point scenes.
+@export_range(0.0, 10.0, 0.05) var deepest_point_bob_speed: float = 1.4
+## Enable gentle rocking while floating.
+@export var deepest_point_rotate_while_floating: bool = true
+## Maximum tilt around the X axis while floating, in degrees.
+@export_range(0.0, 20.0, 0.1) var deepest_point_rock_x_amplitude_degrees: float = 3.0
+## Maximum tilt around the Z axis while floating, in degrees.
+@export_range(0.0, 20.0, 0.1) var deepest_point_rock_z_amplitude_degrees: float = 2.0
+## Minimum rocking speed while floating, in cycles per second.
+@export_range(0.0, 5.0, 0.05) var deepest_point_rock_speed_min: float = 0.25
+## Maximum rocking speed while floating, in cycles per second.
+@export_range(0.0, 5.0, 0.05) var deepest_point_rock_speed_max: float = 0.65
 
 @export_group("Water")
 ## Spawn a translucent water volume over submerged terrain.
@@ -107,6 +129,8 @@ class Cell:
 @export_range(0.5, 20.0, 0.1) var water_height_lerp_speed: float = 6.0
 ## Lift the water surface slightly to avoid z-fighting on the waterline.
 @export var water_surface_offset: float = 0.02
+## Lowers the generated lava surface below its sampled depth level without changing terrain heights.
+@export_range(0.0, 0.5, 0.005) var water_surface_lowering: float = 0.03
 ## Extra world-space coverage added to each side of the generated surface.
 @export_range(0.0, 1.0, 0.05) var water_surface_margin_ratio: float = 0.2
 ## Maximum subdivisions used for the generated lava surface plane.
@@ -117,6 +141,18 @@ class Cell:
 @export var water_color: Color = Color(0.08, 0.33, 0.46, 0.5)
 ## Emission tint to keep the fallback material readable in darker areas.
 @export var water_emission_color: Color = Color(0.04, 0.18, 0.28, 1.0)
+
+@export_group("Internal Walls")
+## Convert some interior floor cells into actual wall cells during map generation.
+@export var scatter_internal_walls: bool = true
+## Noise scale used to cluster internal wall placement across the level.
+@export_range(0.05, 2.0, 0.05) var internal_wall_noise_scale: float = 0.25
+## Minimum normalized noise value required before a floor cell becomes an internal wall.
+@export_range(0.0, 1.0, 0.01) var internal_wall_noise_threshold: float = 0.84
+## Minimum number of neighboring floor cells required before converting a floor cell into a wall.
+@export_range(0, 8, 1) var internal_wall_min_floor_neighbors: int = 5
+## Print extra diagnostics for internal wall placement decisions.
+@export var debug_internal_walls: bool = true
 
 @export_group("Debug")
 @export var show_grid_debug: bool = true
@@ -146,6 +182,8 @@ var _water_volume: MeshInstance3D
 var _displayed_water_height_level: float = 3.0
 var _target_water_height_level: float = 3.0
 var _default_water_surface_material: Material = preload("res://shaders/psOneLava.tres")
+var _floating_deepest_point_nodes: Array[Node3D] = []
+var _floating_motion_time: float = 0.0
 
 # Materials
 var _base_material: StandardMaterial3D
@@ -172,7 +210,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_floating_motion_time += delta
 	_update_water_height_animation(delta)
+	_update_floating_deepest_point_scenes()
 
 
 ## Regenerates the entire map.
@@ -203,6 +243,8 @@ func _clear_map() -> void:
 		if is_instance_valid(obj):
 			obj.queue_free()
 	_spawned_objects.clear()
+	_floating_deepest_point_nodes.clear()
+	_floating_motion_time = 0.0
 	_water_volume = null
 	_rooms.clear()
 	_cells.clear()
@@ -339,8 +381,71 @@ func _generate_cells() -> void:
 ## Marks cells as walls if adjacent to floors.
 func _mark_walls() -> void:
 	for cell in _cells:
-		if not cell.is_floor:
+		if cell.is_floor:
+			cell.is_wall = false
+		else:
 			cell.is_wall = _has_neighbours(cell, "is_floor", 2.5)
+
+	if not scatter_internal_walls or _noise == null:
+		if debug_internal_walls:
+			print("[Internal Walls] Skipped. enabled=", scatter_internal_walls, " noise=", _noise != null)
+		return
+
+	var protected_positions: Array[Vector2] = []
+	for room in _rooms:
+		var room_center_pos: Vector2 = _world_to_grid(room.position)
+		var room_center_cell: Cell = _get_cell_at(room_center_pos)
+		if room_center_cell != null and room_center_cell.is_floor:
+			protected_positions.append(room_center_pos)
+
+	var candidate_count: int = 0
+	var protected_count: int = 0
+	var sparse_count: int = 0
+	var below_threshold_count: int = 0
+	var converted_count: int = 0
+	var min_noise_sample: float = INF
+	var max_noise_sample: float = -INF
+
+	for cell in _cells:
+		if not cell.is_floor:
+			continue
+
+		candidate_count += 1
+
+		if protected_positions.has(cell.position):
+			protected_count += 1
+			continue
+
+		if _count_floor_neighbors(cell.position) < internal_wall_min_floor_neighbors:
+			sparse_count += 1
+			continue
+
+		var noise_sample: float = _get_internal_wall_noise(cell.position)
+		min_noise_sample = minf(min_noise_sample, noise_sample)
+		max_noise_sample = maxf(max_noise_sample, noise_sample)
+		if noise_sample < internal_wall_noise_threshold:
+			below_threshold_count += 1
+			continue
+
+		cell.is_floor = false
+		cell.is_wall = true
+		converted_count += 1
+
+	if min_noise_sample == INF:
+		min_noise_sample = 0.0
+	if max_noise_sample == -INF:
+		max_noise_sample = 0.0
+
+	if debug_internal_walls:
+		print(
+			"[Internal Walls] candidates=", candidate_count,
+			" protected=", protected_count,
+			" sparse=", sparse_count,
+			" below_threshold=", below_threshold_count,
+			" converted=", converted_count,
+			" threshold=", internal_wall_noise_threshold,
+			" noise_range=", Vector2(min_noise_sample, max_noise_sample)
+		)
 
 
 ## Marks cells as lava based on noise and proximity.
@@ -454,6 +559,13 @@ func _spawn_wall(pos: Vector3) -> void:
 		wall.call("_regenerate")
 	
 	_spawned_objects.append(wall)
+
+
+## Returns the normalized noise value used to decide whether a floor cell becomes an internal wall.
+func _get_internal_wall_noise(grid_pos: Vector2) -> float:
+	var sample_x: float = (grid_pos.x + 37.0) * internal_wall_noise_scale
+	var sample_y: float = (grid_pos.y + 91.0) * internal_wall_noise_scale
+	return (_noise.get_noise_2d(sample_x, sample_y) + 1.0) * 0.5
 
 
 ## Identifies the center position of each room
@@ -786,6 +898,9 @@ func _spawn_deepest_point_scenes() -> void:
 	if _lava_sources.is_empty():
 		return
 
+	_floating_deepest_point_nodes.clear()
+	var spawn_material_override: Material = _resolve_deepest_point_material_override()
+
 	for source_grid_pos in _lava_sources:
 		var source_cell: Cell = _get_cell_at(source_grid_pos)
 		if source_cell == null:
@@ -798,14 +913,205 @@ func _spawn_deepest_point_scenes() -> void:
 			return
 
 		add_child(spawned_node)
-		spawned_node.position = _get_cell_surface_position(source_cell) + Vector3(0.0, deepest_point_scene_height_offset, 0.0)
 		spawned_node.scale = deepest_point_scene_scale
-		if deepest_point_material_override != null:
-			_apply_material_override_to_meshes(spawned_node, deepest_point_material_override)
+		spawned_node.position = _get_deepest_point_spawn_position(source_cell, spawned_node)
+		_disable_collision_for_deepest_point_scene(spawned_node)
+		if spawn_material_override != null:
+			_apply_material_override_to_meshes(spawned_node, spawn_material_override)
 		spawned_node.add_to_group("deepest_point_scene")
+		if _should_float_deepest_point_scene():
+			var lowest_local_y: float = _get_lowest_local_y_for_node(spawned_node)
+			var float_phase: float = _rng.randf_range(0.0, TAU)
+			var base_yaw: float = _rng.randf_range(0.0, TAU)
+			var rock_speed: float = _rng.randf_range(
+				minf(deepest_point_rock_speed_min, deepest_point_rock_speed_max),
+				maxf(deepest_point_rock_speed_min, deepest_point_rock_speed_max)
+			)
+			var rock_phase_x: float = _rng.randf_range(0.0, TAU)
+			var rock_phase_z: float = _rng.randf_range(0.0, TAU)
+			var rock_x_amplitude_radians: float = deg_to_rad(_rng.randf_range(0.4, 1.0) * deepest_point_rock_x_amplitude_degrees)
+			var rock_z_amplitude_radians: float = deg_to_rad(_rng.randf_range(0.4, 1.0) * deepest_point_rock_z_amplitude_degrees)
+			spawned_node.set_meta("deepest_point_lowest_local_y", lowest_local_y)
+			spawned_node.set_meta("deepest_point_float_phase", float_phase)
+			spawned_node.set_meta("deepest_point_base_yaw", base_yaw)
+			spawned_node.set_meta("deepest_point_rock_speed", rock_speed)
+			spawned_node.set_meta("deepest_point_rock_phase_x", rock_phase_x)
+			spawned_node.set_meta("deepest_point_rock_phase_z", rock_phase_z)
+			spawned_node.set_meta("deepest_point_rock_x_amplitude_radians", rock_x_amplitude_radians)
+			spawned_node.set_meta("deepest_point_rock_z_amplitude_radians", rock_z_amplitude_radians)
+			spawned_node.rotation.y = base_yaw
+			_floating_deepest_point_nodes.append(spawned_node)
 		_spawned_objects.append(spawned_node)
+	if deepest_point_match_player_material:
+		var player_node: Node = NodeUtils.find_node(self, "player", ["../Player"], "Player.gd")
+		if player_node != null:
+			var player_material: Material = _find_first_material_override_in_subtree(player_node)
+			if player_material != null:
+				return player_material
+
+	return deepest_point_material_override
+
+
+func _find_first_material_override_in_subtree(current_node: Node) -> Material:
+	if current_node is MeshInstance3D:
+		var mesh_instance: MeshInstance3D = current_node as MeshInstance3D
+		if mesh_instance.material_override != null:
+			return mesh_instance.material_override
+		if mesh_instance.mesh != null:
+			var surface_count: int = mesh_instance.mesh.get_surface_count()
+			for surface_index in range(surface_count):
+				var surface_material: Material = mesh_instance.get_active_material(surface_index)
+				if surface_material != null:
+					return surface_material
+
+	for child in current_node.get_children():
+		var child_node: Node = child
+		var child_material: Material = _find_first_material_override_in_subtree(child_node)
+		if child_material != null:
+			return child_material
+
+	return null
 
 	print("[Deepest Spawn] Spawned ", _lava_sources.size(), " scene instances")
+
+
+
+func _get_deepest_point_spawn_position(source_cell: Cell, spawned_node: Node3D) -> Vector3:
+	var spawn_position: Vector3 = _get_cell_surface_position(source_cell) + Vector3(0.0, deepest_point_scene_height_offset, 0.0)
+	var lowest_local_y: float = _get_lowest_local_y_for_node(spawned_node)
+	if not _should_float_deepest_point_scene():
+		spawn_position.y -= lowest_local_y
+		return spawn_position
+
+	spawn_position.y = _get_water_surface_world_height(_displayed_water_height_level) + deepest_point_scene_height_offset + deepest_point_water_float_offset - lowest_local_y
+	return spawn_position
+
+func _disable_collision_for_deepest_point_scene(root_node: Node) -> void:
+	if not deepest_point_scene_disable_collision:
+		return
+
+	_disable_collision_in_subtree(root_node)
+
+func _disable_collision_in_subtree(current_node: Node) -> void:
+	if current_node is CollisionObject3D:
+		var collision_object: CollisionObject3D = current_node as CollisionObject3D
+		collision_object.collision_layer = 0
+		collision_object.collision_mask = 0
+
+	if current_node is CollisionShape3D:
+		var collision_shape: CollisionShape3D = current_node as CollisionShape3D
+		collision_shape.disabled = true
+
+	if current_node is CollisionPolygon3D:
+		var collision_polygon: CollisionPolygon3D = current_node as CollisionPolygon3D
+		collision_polygon.disabled = true
+
+	for child in current_node.get_children():
+		var child_node: Node = child
+		_disable_collision_in_subtree(child_node)
+
+
+func _should_float_deepest_point_scene() -> bool:
+	return deepest_point_float_on_water and render_water and use_layered_depth
+
+
+func _update_floating_deepest_point_scenes() -> void:
+	if _floating_deepest_point_nodes.is_empty():
+		return
+
+	if not _should_float_deepest_point_scene():
+		return
+
+	var surface_y: float = _get_water_surface_world_height(_displayed_water_height_level) + deepest_point_scene_height_offset + deepest_point_water_float_offset
+	for spawned_node in _floating_deepest_point_nodes:
+		if not is_instance_valid(spawned_node):
+			continue
+
+		var lowest_local_y: float = 0.0
+		if spawned_node.has_meta("deepest_point_lowest_local_y"):
+			lowest_local_y = float(spawned_node.get_meta("deepest_point_lowest_local_y"))
+
+		var float_phase: float = 0.0
+		if spawned_node.has_meta("deepest_point_float_phase"):
+			float_phase = float(spawned_node.get_meta("deepest_point_float_phase"))
+
+		var bob_offset: float = sin((_floating_motion_time * deepest_point_bob_speed) + float_phase) * deepest_point_bob_amplitude
+		var next_position: Vector3 = spawned_node.position
+		next_position.y = surface_y - lowest_local_y + bob_offset
+		spawned_node.position = next_position
+
+		if deepest_point_rotate_while_floating:
+			var base_yaw: float = 0.0
+			if spawned_node.has_meta("deepest_point_base_yaw"):
+				base_yaw = float(spawned_node.get_meta("deepest_point_base_yaw"))
+
+			var rock_speed: float = 0.0
+			if spawned_node.has_meta("deepest_point_rock_speed"):
+				rock_speed = float(spawned_node.get_meta("deepest_point_rock_speed"))
+
+			var rock_phase_x: float = 0.0
+			if spawned_node.has_meta("deepest_point_rock_phase_x"):
+				rock_phase_x = float(spawned_node.get_meta("deepest_point_rock_phase_x"))
+
+			var rock_phase_z: float = 0.0
+			if spawned_node.has_meta("deepest_point_rock_phase_z"):
+				rock_phase_z = float(spawned_node.get_meta("deepest_point_rock_phase_z"))
+
+			var rock_x_amplitude_radians: float = 0.0
+			if spawned_node.has_meta("deepest_point_rock_x_amplitude_radians"):
+				rock_x_amplitude_radians = float(spawned_node.get_meta("deepest_point_rock_x_amplitude_radians"))
+
+			var rock_z_amplitude_radians: float = 0.0
+			if spawned_node.has_meta("deepest_point_rock_z_amplitude_radians"):
+				rock_z_amplitude_radians = float(spawned_node.get_meta("deepest_point_rock_z_amplitude_radians"))
+
+			var next_rotation: Vector3 = spawned_node.rotation
+			next_rotation.x = sin((_floating_motion_time * TAU * rock_speed) + rock_phase_x) * rock_x_amplitude_radians
+			next_rotation.y = base_yaw
+			next_rotation.z = sin((_floating_motion_time * TAU * rock_speed * 0.87) + rock_phase_z) * rock_z_amplitude_radians
+			spawned_node.rotation = next_rotation
+
+
+func _get_lowest_local_y_for_node(root_node: Node3D) -> float:
+	var bounds_state: Dictionary = {
+		"found_mesh": false,
+		"min_y": 0.0,
+	}
+	_collect_lowest_local_y(root_node, root_node, bounds_state)
+	return float(bounds_state.get("min_y", 0.0))
+
+
+func _collect_lowest_local_y(root_node: Node3D, current_node: Node, bounds_state: Dictionary) -> void:
+	if current_node is MeshInstance3D:
+		var mesh_instance: MeshInstance3D = current_node as MeshInstance3D
+		if mesh_instance.mesh != null:
+			var local_transform: Transform3D = root_node.global_transform.affine_inverse() * mesh_instance.global_transform
+			var mesh_aabb: AABB = mesh_instance.mesh.get_aabb()
+			var corners: Array[Vector3] = _get_aabb_corners(mesh_aabb)
+			for corner in corners:
+				var corner_in_root: Vector3 = local_transform * corner
+				if not bool(bounds_state.get("found_mesh", false)) or corner_in_root.y < float(bounds_state.get("min_y", 0.0)):
+					bounds_state["min_y"] = corner_in_root.y
+					bounds_state["found_mesh"] = true
+
+	for child in current_node.get_children():
+		var child_node: Node = child
+		_collect_lowest_local_y(root_node, child_node, bounds_state)
+
+
+func _get_aabb_corners(bounds: AABB) -> Array[Vector3]:
+	var corners: Array[Vector3] = []
+	var min_corner: Vector3 = bounds.position
+	var max_corner: Vector3 = bounds.position + bounds.size
+	corners.append(Vector3(min_corner.x, min_corner.y, min_corner.z))
+	corners.append(Vector3(min_corner.x, min_corner.y, max_corner.z))
+	corners.append(Vector3(min_corner.x, max_corner.y, min_corner.z))
+	corners.append(Vector3(min_corner.x, max_corner.y, max_corner.z))
+	corners.append(Vector3(max_corner.x, min_corner.y, min_corner.z))
+	corners.append(Vector3(max_corner.x, min_corner.y, max_corner.z))
+	corners.append(Vector3(max_corner.x, max_corner.y, min_corner.z))
+	corners.append(Vector3(max_corner.x, max_corner.y, max_corner.z))
+	return corners
 
 
 ## Applies a material override to every mesh in a spawned scene subtree.
@@ -832,7 +1138,7 @@ func _spawn_water_volume() -> void:
 		return
 
 	var clamped_water_level: float = clampf(_displayed_water_height_level, 0.0, 4.0)
-	var surface_y: float = _get_depth_level_world_height(clamped_water_level) + water_surface_offset
+	var surface_y: float = _get_water_surface_world_height(clamped_water_level)
 	var surface_center: Vector3 = surface_bounds.get("center", Vector3.ZERO)
 	var surface_size: Vector2 = surface_bounds.get("size", Vector2.ZERO)
 	if surface_size.x <= 0.0 or surface_size.y <= 0.0:
@@ -927,7 +1233,7 @@ func _refresh_water_volume() -> void:
 		_spawn_water_volume()
 		return
 
-	_water_volume.position.y = _get_depth_level_world_height(_displayed_water_height_level) + water_surface_offset
+	_water_volume.position.y = _get_water_surface_world_height(_displayed_water_height_level)
 
 
 ## Synchronizes the water target and displayed level from the exported value.
@@ -975,6 +1281,11 @@ func _remove_water_volume() -> void:
 ## Converts a discrete depth level into the world-space terrain height.
 func _get_depth_world_height(depth: int) -> float:
 	return _get_depth_level_world_height(float(depth))
+
+
+## Returns the world-space height used by the generated lava surface plane.
+func _get_water_surface_world_height(depth_level: float) -> float:
+	return _get_depth_level_world_height(depth_level) + water_surface_offset - water_surface_lowering
 
 
 ## Returns the generated map bounds expanded with an extra surface margin on every side.
@@ -1607,6 +1918,23 @@ func _has_filled_neighbor(cell: Cell, direction: Vector2) -> bool:
 			return true
 	
 	return false
+
+
+## Counts neighboring floor cells in the 8-cell neighborhood around a grid position.
+func _count_floor_neighbors(grid_pos: Vector2) -> int:
+	var count: int = 0
+
+	for x_offset in range(-1, 2):
+		for y_offset in range(-1, 2):
+			if x_offset == 0 and y_offset == 0:
+				continue
+
+			var neighbor_pos: Vector2 = Vector2(grid_pos.x + x_offset, grid_pos.y + y_offset)
+			var neighbor_cell: Cell = _get_cell_at(neighbor_pos)
+			if neighbor_cell != null and neighbor_cell.is_floor:
+				count += 1
+
+	return count
 
 
 ## Helper: Convert cell grid position to world position (center of cell).
