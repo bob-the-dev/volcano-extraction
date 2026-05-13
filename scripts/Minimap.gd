@@ -9,6 +9,9 @@ extends Control
 @export var background_color: Color = Color.BLACK
 @export var player_color: Color = Color.GREEN
 @export var player_dot_size: int = 2
+@export var camera_direction_color: Color = Color(1.0, 0.95, 0.2, 1.0)
+@export var camera_direction_length: int = 14
+@export var camera_direction_tip_size: int = 2
 @export var lava_source_color: Color = Color.RED
 @export var lava_source_dot_size: int = 3
 @export var highground_color: Color = Color(0.0, 1.0, 0.0)  # Bright green
@@ -19,6 +22,7 @@ var _minimap_texture: ImageTexture
 var _texture_rect: TextureRect
 var _procedural_map: Node3D
 var _player: Node3D
+var _camera: Camera3D
 var _map_bounds: Dictionary = {}
 
 
@@ -51,8 +55,15 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	_update_camera_reference()
 	if _minimap_image and _player:
 		_update_player_position()
+
+
+func _update_camera_reference() -> void:
+	var viewport_camera: Camera3D = get_viewport().get_camera_3d()
+	if viewport_camera != null:
+		_camera = viewport_camera
 
 
 ## Finds the player node in the scene.
@@ -147,18 +158,63 @@ func _update_player_position() -> void:
 		return
 	
 	# Redraw base minimap (copy original)
-	var temp_image := _minimap_image.duplicate()
+	var temp_image: Image = _minimap_image.duplicate()
 	
 	# Convert player world position to minimap pixel coordinates
-	var player_pos := _player.global_position
+	var player_pos: Vector3 = _player.global_position
 	var normalized_x: float = (player_pos.x - float(_map_bounds.min_x)) / float(_map_bounds.width)
 	var normalized_z: float = (player_pos.z - float(_map_bounds.min_z)) / float(_map_bounds.height)
 	
-	var pixel_x := int(normalized_x * temp_image.get_width())
-	var pixel_y := int(normalized_z * temp_image.get_height())
+	var pixel_x: int = int(normalized_x * temp_image.get_width())
+	var pixel_y: int = int(normalized_z * temp_image.get_height())
 	
 	# Draw player dot using helper function
 	_draw_marker(temp_image, pixel_x, pixel_y, player_color, player_dot_size, temp_image.get_width(), temp_image.get_height())
+	_draw_camera_direction(temp_image, pixel_x, pixel_y)
 	
 	# Update texture
 	_minimap_texture.update(temp_image)
+
+
+func _draw_camera_direction(image: Image, start_x: int, start_y: int) -> void:
+	if _camera == null or not is_instance_valid(_camera):
+		return
+
+	var camera_forward: Vector3 = -_camera.global_basis.z
+	camera_forward.y = 0.0
+	if camera_forward.length_squared() <= 0.0001:
+		return
+
+	camera_forward = camera_forward.normalized()
+	var direction_2d: Vector2 = Vector2(camera_forward.x, camera_forward.z)
+	var tip_offset: Vector2 = direction_2d * float(camera_direction_length)
+	var tip_x: int = start_x + int(round(tip_offset.x))
+	var tip_y: int = start_y + int(round(tip_offset.y))
+
+	_draw_image_line(image, start_x, start_y, tip_x, tip_y, camera_direction_color)
+	_draw_marker(
+		image,
+		tip_x,
+		tip_y,
+		camera_direction_color,
+		camera_direction_tip_size,
+		image.get_width(),
+		image.get_height()
+	)
+
+
+func _draw_image_line(image: Image, start_x: int, start_y: int, end_x: int, end_y: int, color: Color) -> void:
+	var delta_x: int = end_x - start_x
+	var delta_y: int = end_y - start_y
+	var step_count: int = maxi(abs(delta_x), abs(delta_y))
+	if step_count <= 0:
+		if start_x >= 0 and start_x < image.get_width() and start_y >= 0 and start_y < image.get_height():
+			image.set_pixel(start_x, start_y, color)
+		return
+
+	for step_index: int in range(step_count + 1):
+		var weight: float = float(step_index) / float(step_count)
+		var pixel_x: int = int(round(lerpf(float(start_x), float(end_x), weight)))
+		var pixel_y: int = int(round(lerpf(float(start_y), float(end_y), weight)))
+		if pixel_x >= 0 and pixel_x < image.get_width() and pixel_y >= 0 and pixel_y < image.get_height():
+			image.set_pixel(pixel_x, pixel_y, color)

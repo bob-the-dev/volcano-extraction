@@ -21,17 +21,41 @@ extends CharacterBody3D
 ## How quickly the visible model aligns to the ground normal.
 @export var ground_alignment_speed : float = 10.0
 
+@export_group("Camera Orbit")
+## Scene path to the PhantomCamera3D node that orbits around the player.
+@export var camera_orbit_rig_path: NodePath = NodePath("../PhantomCamera3D")
+## Degrees to rotate the camera each time Tab is pressed.
+@export var camera_orbit_step_degrees: float = 90.0
+## Duration of the camera orbit tween in seconds.
+@export var camera_orbit_rotate_duration: float = 0.18
+
 @export_group("Footprints")
 ## Enable terrain footprint emission while grounded and moving.
 @export var emit_terrain_footprints : bool = true
 ## Time in seconds between footprint stamps while grounded and moving.
 @export var footstep_interval : float = 0.18
+## Random variation applied to the base footstep interval.
+@export var footstep_interval_randomness : float = 0.05
+## Minimum horizontal distance required between consecutive footprint stamps.
+@export var footstep_min_distance : float = 0.22
 ## Minimum horizontal speed required before footprints are emitted.
 @export var footstep_min_speed : float = 1.0
 ## Side offset used to alternate left and right footsteps.
 @export var footstep_lateral_offset : float = 0.18
 ## Forward offset used to place footprints closer to the character's feet.
 @export var footstep_forward_offset : float = 0.0
+## Half-length of the emitted footprint ellipse along its forward direction.
+@export var footstep_length : float = 0.26
+## Half-width of the emitted footprint ellipse across its forward direction.
+@export var footstep_width : float = 0.12
+## Base outward angle applied to each footprint away from the body center.
+@export var footstep_outward_angle_degrees : float = 7.0
+## Random angle variation applied on top of the outward footprint rotation.
+@export var footstep_angle_randomness_degrees : float = 4.0
+## How far above the player origin the terrain contact probe starts.
+@export var footstep_ground_probe_start_height : float = 1.0
+## How far downward the terrain contact probe checks for nearby ground.
+@export var footstep_ground_probe_distance : float = 1.4
 
 @export_group("Input Actions")
 ## Name of Input Action to move Left.
@@ -102,12 +126,32 @@ var _current_path_index: int = 0
 var _grid_cell_size: float = 2.0  # Default, will be updated from map
 var _debug_waypoint_markers: Array[Node3D] = []
 var _footstep_interval_timer: float = 0.0
+var _next_footstep_interval: float = 0.18
 var _was_emitting_terrain_footprints: bool = false
 var _use_left_footstep: bool = true
+var _footstep_rng: RandomNumberGenerator = RandomNumberGenerator.new()
+var _last_terrain_footprint_position: Vector3 = Vector3.ZERO
+var _has_last_terrain_footprint_position: bool = false
+var _camera_orbit_rig: Node3D = null
+var _camera_orbit_tween: Tween = null
+var _camera_orbit_base_horizontal_rotation: float = 0.0
+var _has_camera_orbit_base_horizontal_rotation: bool = false
+
+
+func _log_camera_orbit(message: String) -> void:
+	if debug_movement:
+		print("[CameraOrbit] ", message)
 
 func _ready() -> void:
 	# Add to player group for easy lookup
 	add_to_group("player")
+	_footstep_rng.randomize()
+	_camera_orbit_rig = _resolve_camera_orbit_rig()
+	_capture_camera_orbit_base_rotation()
+	if _camera_orbit_rig:
+		_log_camera_orbit("Ready with rig '" + _camera_orbit_rig.name + "' at path " + str(_camera_orbit_rig.get_path()))
+	else:
+		_log_camera_orbit("Ready without a resolved orbit rig. Configured path: " + str(camera_orbit_rig_path))
 	
 	# Enable step-up for small ledges
 	floor_stop_on_slope = false
@@ -408,6 +452,11 @@ func _find_nearest_walkable_point(target_grid: Vector2) -> int:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB):
+		_log_camera_orbit("Tab detected. keycode=%s physical_keycode=%s" % [event.keycode, event.physical_keycode])
+		_rotate_camera_clockwise()
+		return
+
 	if not click_to_move or not can_move:
 		return
 	
@@ -419,6 +468,93 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_handle_click(event.position)
+
+
+func _resolve_camera_orbit_rig() -> Node3D:
+	if _camera_orbit_rig and is_instance_valid(_camera_orbit_rig):
+		return _camera_orbit_rig
+
+	if not camera_orbit_rig_path.is_empty():
+		_camera_orbit_rig = get_node_or_null(camera_orbit_rig_path) as Node3D
+		if _camera_orbit_rig:
+			_log_camera_orbit("Resolved rig from configured path: " + str(camera_orbit_rig_path))
+
+	if not _camera_orbit_rig and get_parent():
+		_camera_orbit_rig = get_parent().get_node_or_null("PhantomCamera3D") as Node3D
+		if _camera_orbit_rig:
+			_log_camera_orbit("Resolved rig from parent fallback path ../PhantomCamera3D")
+
+	if _camera_orbit_rig == null:
+		_log_camera_orbit("Failed to resolve rig. Configured path: " + str(camera_orbit_rig_path))
+
+	return _camera_orbit_rig
+
+
+func _capture_camera_orbit_base_rotation() -> void:
+	if _has_camera_orbit_base_horizontal_rotation:
+		return
+
+	var camera_orbit_rig: Node3D = _resolve_camera_orbit_rig()
+	if camera_orbit_rig == null:
+		_log_camera_orbit("Cannot capture base rotation because no rig is resolved")
+		return
+
+	var horizontal_rotation_value: Variant = camera_orbit_rig.get("horizontal_rotation_offset")
+	if not horizontal_rotation_value is float:
+		_log_camera_orbit("Rig '" + camera_orbit_rig.name + "' does not expose a float horizontal_rotation_offset")
+		return
+
+	_camera_orbit_base_horizontal_rotation = horizontal_rotation_value
+	_has_camera_orbit_base_horizontal_rotation = true
+	_log_camera_orbit("Captured base horizontal rotation: %.3f rad" % _camera_orbit_base_horizontal_rotation)
+
+
+func _rotate_camera_clockwise() -> void:
+	var camera_orbit_rig: Node3D = _resolve_camera_orbit_rig()
+	if camera_orbit_rig == null:
+		_log_camera_orbit("Rotate request ignored because no rig is resolved")
+		return
+	_capture_camera_orbit_base_rotation()
+	if not _has_camera_orbit_base_horizontal_rotation:
+		_log_camera_orbit("Rotate request ignored because base rotation was not captured")
+		return
+
+	var rotation_radians: float = deg_to_rad(camera_orbit_step_degrees)
+	var current_horizontal_rotation_value: Variant = camera_orbit_rig.get("horizontal_rotation_offset")
+	if not current_horizontal_rotation_value is float:
+		_log_camera_orbit("Rotate request ignored because horizontal_rotation_offset is not readable as float")
+		return
+
+	var current_horizontal_rotation: float = current_horizontal_rotation_value
+	var relative_rotation: float = current_horizontal_rotation - _camera_orbit_base_horizontal_rotation
+	var snapped_step_index: int = int(round(relative_rotation / -rotation_radians))
+	var snapped_horizontal_rotation: float = _camera_orbit_base_horizontal_rotation - (rotation_radians * float(snapped_step_index))
+	var target_horizontal_rotation: float = snapped_horizontal_rotation - rotation_radians
+	_log_camera_orbit(
+		"Rotating rig '%s' from %.3f rad to %.3f rad (base=%.3f, step=%d, step_size=%.3f)" % [
+			camera_orbit_rig.name,
+			current_horizontal_rotation,
+			target_horizontal_rotation,
+			_camera_orbit_base_horizontal_rotation,
+			snapped_step_index,
+			rotation_radians
+		]
+	)
+
+	if is_instance_valid(_camera_orbit_tween):
+		_camera_orbit_tween.kill()
+		_log_camera_orbit("Killed existing orbit tween before starting a new one")
+
+	if camera_orbit_rotate_duration <= 0.0:
+		camera_orbit_rig.set("horizontal_rotation_offset", target_horizontal_rotation)
+		_log_camera_orbit("Applied horizontal rotation immediately")
+		return
+
+	_camera_orbit_tween = create_tween()
+	_camera_orbit_tween.set_trans(Tween.TRANS_SINE)
+	_camera_orbit_tween.set_ease(Tween.EASE_IN_OUT)
+	_camera_orbit_tween.tween_property(camera_orbit_rig, "horizontal_rotation_offset", target_horizontal_rotation, camera_orbit_rotate_duration)
+	_log_camera_orbit("Started tween over %.3f seconds" % camera_orbit_rotate_duration)
 
 
 func _physics_process(delta: float) -> void:
@@ -447,6 +583,10 @@ func _align_visual_to_ground(delta: float) -> void:
 	var target_normal: Vector3 = Vector3.UP
 	if is_on_floor():
 		target_normal = get_floor_normal()
+	else:
+		var ground_probe: Dictionary = _get_footprint_ground_probe()
+		if not ground_probe.is_empty():
+			target_normal = ground_probe.normal
 
 	var player_basis: Basis = global_transform.basis.orthonormalized()
 	var local_up: Vector3 = (player_basis.inverse() * target_normal).normalized()
@@ -474,36 +614,53 @@ func _update_terrain_footprints(delta: float, position_before_move: Vector3) -> 
 		return
 
 	var interval_duration: float = max(footstep_interval, 0.001)
-	var horizontal_velocity: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
-	var should_emit_footprints: bool = is_on_floor() and horizontal_velocity.length() >= footstep_min_speed
+	var current_position: Vector3 = global_position
+	var horizontal_movement_segment: Vector3 = Vector3(
+		current_position.x - position_before_move.x,
+		0.0,
+		current_position.z - position_before_move.z
+	)
+	var horizontal_distance: float = horizontal_movement_segment.length()
+	var horizontal_speed: float = horizontal_distance / max(delta, 0.0001)
+	var move_direction: Vector3 = Vector3.ZERO
+	if horizontal_distance > 0.0001:
+		move_direction = horizontal_movement_segment / horizontal_distance
+	else:
+		var horizontal_velocity: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+		if horizontal_velocity.length_squared() > 0.0001:
+			move_direction = horizontal_velocity.normalized()
+
+	var ground_probe: Dictionary = _get_footprint_ground_probe()
+	var has_ground_contact: bool = is_on_floor() or not ground_probe.is_empty()
+	var should_emit_footprints: bool = has_ground_contact and horizontal_speed >= footstep_min_speed and move_direction.length_squared() > 0.0001
 	if not should_emit_footprints:
 		_was_emitting_terrain_footprints = false
 		_footstep_interval_timer = 0.0
+		_next_footstep_interval = _roll_next_footstep_interval()
 		return
-
-	var current_position: Vector3 = global_position
-	var movement_segment: Vector3 = current_position - position_before_move
-	var move_direction: Vector3 = horizontal_velocity.normalized()
-	if movement_segment.length_squared() > 0.0001:
-		move_direction = movement_segment.normalized()
 
 	if not _was_emitting_terrain_footprints:
 		_emit_starting_terrain_footprints(position_before_move, move_direction)
 		_use_left_footstep = true
 		_was_emitting_terrain_footprints = true
-		_footstep_interval_timer = interval_duration * 0.5
-		return
+		_next_footstep_interval = _roll_next_footstep_interval()
+		_footstep_interval_timer = minf(_next_footstep_interval * 0.5, interval_duration)
 
-	var elapsed_until_next_footstep: float = interval_duration - _footstep_interval_timer
-	while elapsed_until_next_footstep <= delta:
+	var remaining_frame_time: float = delta
+	var elapsed_frame_time: float = 0.0
+	while _footstep_interval_timer + remaining_frame_time >= _next_footstep_interval:
+		var elapsed_until_next_footstep: float = _next_footstep_interval - _footstep_interval_timer
+		elapsed_frame_time += elapsed_until_next_footstep
 		var interpolation_weight: float = 1.0
 		if delta > 0.0001:
-			interpolation_weight = clamp(elapsed_until_next_footstep / delta, 0.0, 1.0)
+			interpolation_weight = clamp(elapsed_frame_time / delta, 0.0, 1.0)
 		var emit_position: Vector3 = position_before_move.lerp(current_position, interpolation_weight)
 		_emit_terrain_footprint(emit_position, move_direction)
-		elapsed_until_next_footstep += interval_duration
+		remaining_frame_time -= elapsed_until_next_footstep
+		_footstep_interval_timer = 0.0
+		_next_footstep_interval = _roll_next_footstep_interval()
 
-	_footstep_interval_timer = fposmod(_footstep_interval_timer + delta, interval_duration)
+	_footstep_interval_timer += remaining_frame_time
 
 
 func _emit_starting_terrain_footprints(current_position: Vector3, move_direction: Vector3) -> void:
@@ -513,15 +670,75 @@ func _emit_starting_terrain_footprints(current_position: Vector3, move_direction
 
 func _emit_terrain_footprint(current_position: Vector3, move_direction: Vector3) -> void:
 	var lateral_sign: float = -1.0 if _use_left_footstep else 1.0
-	_emit_terrain_footprint_side(current_position, move_direction, lateral_sign)
-	_use_left_footstep = not _use_left_footstep
+	if _emit_terrain_footprint_side(current_position, move_direction, lateral_sign):
+		_use_left_footstep = not _use_left_footstep
 
 
-func _emit_terrain_footprint_side(current_position: Vector3, move_direction: Vector3, lateral_sign: float) -> void:
+func _emit_terrain_footprint_side(current_position: Vector3, move_direction: Vector3, lateral_sign: float) -> bool:
+	var footprint_direction: Vector3 = _get_footprint_direction(move_direction, lateral_sign)
 	var lateral_direction: Vector3 = Vector3(-move_direction.z, 0.0, move_direction.x)
-	var forward_offset: Vector3 = move_direction * footstep_forward_offset
+	var forward_offset: Vector3 = footprint_direction * footstep_forward_offset
 	var footstep_position: Vector3 = current_position + lateral_direction * footstep_lateral_offset * lateral_sign + forward_offset
-	procedural_map.register_terrain_footprint(footstep_position, move_direction)
+	if not _can_emit_terrain_footprint_at(footstep_position):
+		return false
+
+	procedural_map.register_terrain_footprint(
+		footstep_position,
+		footprint_direction,
+		maxf(footstep_length, 0.01),
+		maxf(footstep_width, 0.01)
+	)
+	_last_terrain_footprint_position = footstep_position
+	_has_last_terrain_footprint_position = true
+	return true
+
+
+func _roll_next_footstep_interval() -> float:
+	var randomized_interval: float = footstep_interval + _footstep_rng.randf_range(-footstep_interval_randomness, footstep_interval_randomness)
+	return maxf(randomized_interval, 0.04)
+
+
+func _get_footprint_direction(move_direction: Vector3, lateral_sign: float) -> Vector3:
+	if move_direction.length_squared() <= 0.0001:
+		return Vector3.FORWARD
+
+	var angle_offset_degrees: float = (footstep_outward_angle_degrees * lateral_sign) + _footstep_rng.randf_range(-footstep_angle_randomness_degrees, footstep_angle_randomness_degrees)
+	var rotated_direction: Vector3 = move_direction.rotated(Vector3.UP, deg_to_rad(angle_offset_degrees))
+	rotated_direction.y = 0.0
+	if rotated_direction.length_squared() <= 0.0001:
+		return move_direction.normalized()
+	return rotated_direction.normalized()
+
+
+func _can_emit_terrain_footprint_at(footstep_position: Vector3) -> bool:
+	if not _has_last_terrain_footprint_position or footstep_min_distance <= 0.0:
+		return true
+
+	var horizontal_offset: Vector2 = Vector2(
+		footstep_position.x - _last_terrain_footprint_position.x,
+		footstep_position.z - _last_terrain_footprint_position.z
+	)
+	return horizontal_offset.length() >= footstep_min_distance
+
+
+func _get_footprint_ground_probe() -> Dictionary:
+	var from: Vector3 = global_position + Vector3.UP * footstep_ground_probe_start_height
+	var to: Vector3 = global_position - Vector3.UP * footstep_ground_probe_distance
+	var space_state := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.collide_with_areas = false
+	query.exclude = [get_rid()]
+
+	var result: Dictionary = space_state.intersect_ray(query)
+	if result.is_empty():
+		return {}
+
+	var collider: Node = result.collider
+	if collider == null:
+		return {}
+	if collider.is_in_group("base_platform") or collider.is_in_group("floor_tile"):
+		return result
+	return {}
 
 
 ## Handle traditional WASD-style input

@@ -1,9 +1,6 @@
 [gd_scene format=3 uid="uid://bgjs7cfay65c2"]
 
 [ext_resource type="PackedScene" uid="uid://bknmich6p0hft" path="res://player.tscn" id="2_0xm2m"]
-[ext_resource type="Script" uid="uid://bd046eokvcnu2" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="2_1bvp3"]
-[ext_resource type="Script" uid="uid://csjccrhj5wnx7" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="2_h2yge"]
-[ext_resource type="Script" uid="uid://8umksf8e80fw" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="3_1bvp3"]
 [ext_resource type="Script" uid="uid://djs5e7lkbo60e" path="res://scripts/procedural_map.gd" id="7_5vw27"]
 [ext_resource type="Script" uid="uid://lvdibt8falnc" path="res://scripts/Minimap.gd" id="8_minimap"]
 [ext_resource type="Script" uid="uid://cjwi6sdjl523b" path="res://scripts/WaterControls.gd" id="9_water_controls"]
@@ -17,13 +14,18 @@ ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
 sky_material = SubResource("ProceduralSkyMaterial_as1t3")
 
 [sub_resource type="Environment" id="Environment_c5lsl"]
-background_mode = 1
+background_mode = 2
 sky = SubResource("Sky_744mi")
 tonemap_mode = 2
 glow_enabled = true
-
-[sub_resource type="Resource" id="Resource_lquwl"]
-script = ExtResource("3_1bvp3")
+volumetric_fog_enabled = true
+volumetric_fog_density = 0.0717
+volumetric_fog_albedo = Color(0.3779188, 0.37791887, 0.37791884, 1)
+volumetric_fog_emission = Color(0.17641911, 0.17641908, 0.17641908, 1)
+volumetric_fog_anisotropy = 0.58
+volumetric_fog_sky_affect = 0.786
+adjustment_enabled = true
+adjustment_contrast = 1.12
 
 [node name="Main" type="Node3D" unique_id=1074138897]
 
@@ -36,10 +38,22 @@ shadow_enabled = true
 shadow_blur = 5.5
 
 [node name="Player" parent="." unique_id=790875423 instance=ExtResource("2_0xm2m")]
-transform = Transform3D(1.35, 0, 0, 0, 1.35, 0, 0, 0, 1.35, -2.9500206, 0, -0.06919098)
-wall_min_slide_angle = 0.10471976
-floor_max_angle = 0.5235988
-safe_margin = 0.25
+wall_min_slide_angle = 0.34906584
+floor_max_angle = 0.80285144
+floor_snap_length = 0.2
+safe_margin = 0.1
+camera_orbit_rig_path = NodePath("")
+camera_orbit_rotate_duration = 0.0
+footstep_interval = 0.167
+footstep_min_distance = 0.02
+footstep_min_speed = 0.205
+footstep_lateral_offset = 0.15
+footstep_length = 0.12
+footstep_width = 0.06
+footstep_outward_angle_degrees = -10.0
+footstep_angle_randomness_degrees = 10.0
+footstep_ground_probe_start_height = 0.2
+footstep_ground_probe_distance = 0.3
 hover_color = Color(0.7285387, 0.33243695, 0.53048784, 0.050980393)
 target_color = Color(0.4284812, 0.27790415, 0.32941735, 0.6117647)
 highlight_emission = 0.005
@@ -50,7 +64,7 @@ click_particle_count = 45
 transform = Transform3D(1, 0, 0, 0, 1, 1.4901161e-08, 0, 0, 1, 0, 0, 2.3841858e-07)
 script = ExtResource("7_5vw27")
 median_rooms = 20
-edge_margin = 5
+edge_margin = 4
 random_seed = 11670
 terrain_perimeter_cells = 1
 num_lava_sources = 4
@@ -59,9 +73,9 @@ depth_source_influence = 5.0
 wall_bias_strength = 3.0
 depth_step_height = 0.2
 pixels_per_cell = 16
-blur_radius = 10
+blur_radius = 12
 mesh_subdivisions = 4
-heightmap_displacement_amplitude = 2.5
+heightmap_displacement_amplitude = 2.7680000000000002
 export_heightmap_debug = true
 terrain_footprint_count = 32
 terrain_footprint_overflow_fade_count = 16
@@ -76,35 +90,6 @@ scatter_internal_walls = false
 debug_internal_walls = false
 show_grid_debug = false
 show_depth_labels = false
-
-[node name="Camera3D" type="Camera3D" parent="." unique_id=1376038959]
-physics_interpolation_mode = 1
-transform = Transform3D(0.7071044, -0.5336562, 0.46390086, 0, 0.656054, 0.7547048, -0.7071044, -0.5336562, 0.46390086, -1.6850206, 11.095, 0.23080903)
-v_offset = -5.65
-doppler_tracking = 2
-current = true
-fov = 66.0
-
-[node name="PhantomCameraHost" type="Node" parent="Camera3D" unique_id=251057525]
-process_priority = 300
-process_physics_priority = 300
-script = ExtResource("2_1bvp3")
-metadata/_custom_type_script = "uid://bd046eokvcnu2"
-
-[node name="PhantomCamera3D" type="Node3D" parent="." unique_id=14269990 node_paths=PackedStringArray("follow_target")]
-transform = Transform3D(0.7071044, -0.5336562, 0.46390086, 0, 0.656054, 0.7547048, -0.7071044, -0.5336562, 0.46390086, -1.6850206, 11.095, 0.23080903)
-top_level = true
-script = ExtResource("2_h2yge")
-follow_mode = 2
-follow_target = NodePath("../Player")
-look_at_mode = 1
-tween_resource = SubResource("Resource_lquwl")
-follow_offset = Vector3(1.265, 11.095, 0.3)
-follow_damping = true
-follow_damping_value = Vector3(0.245, 0.245, 0.245)
-follow_distance = 3.65
-spring_length = 3.65
-_preview_noise = false
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=289701640]
 

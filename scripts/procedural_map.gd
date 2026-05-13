@@ -286,6 +286,7 @@ func _process(delta: float) -> void:
 	_floating_motion_time += delta
 	_update_water_height_animation(delta)
 	_update_floating_deepest_point_scenes()
+	_sync_terrain_footprint_shader_time()
 
 
 ## Regenerates the entire map.
@@ -1840,6 +1841,7 @@ uniform float darkness_noise_scale = 18.0;
 uniform float darkness_noise_strength = 0.16;
 uniform float footprint_lifetime = 5.0;
 uniform float footprint_strength = 0.32;
+uniform float footprint_current_time = 0.0;
 %s
 
 varying vec2 heightmap_uv;
@@ -1870,7 +1872,7 @@ float compute_footprint_mask(vec4 footprint_data, vec4 footprint_shape, vec2 sam
 		return 0.0;
 	}
 
-	float age = TIME - footprint_data.z;
+	float age = footprint_current_time - footprint_data.z;
 	if (age < 0.0 || age > footprint_lifetime) {
 		return 0.0;
 	}
@@ -1982,7 +1984,7 @@ func register_terrain_footprint(world_position: Vector3, move_direction: Vector3
 	if footprint_minor_radius <= 0.0:
 		footprint_minor_radius = terrain_footprint_width
 
-	var footprint_time: float = Time.get_ticks_msec() / 1000.0
+	var footprint_time: float = _get_terrain_footprint_time()
 	_prune_expired_terrain_footprints(footprint_time)
 	var footprint_data: TerrainFootprint = TerrainFootprint.new(
 		world_position,
@@ -1999,12 +2001,24 @@ func register_terrain_footprint(world_position: Vector3, move_direction: Vector3
 	_sync_terrain_footprint_shader_parameters()
 
 
+func _get_terrain_footprint_time() -> float:
+	return Time.get_ticks_usec() / 1000000.0
+
+
+func _sync_terrain_footprint_shader_time() -> void:
+	if _terrain_shader_material == null:
+		return
+
+	_terrain_shader_material.set_shader_parameter("footprint_current_time", _get_terrain_footprint_time())
+
+
 func _sync_terrain_footprint_shader_parameters() -> void:
 	if _terrain_shader_material == null:
 		return
 
 	_terrain_shader_material.set_shader_parameter("footprint_lifetime", terrain_footprint_lifetime)
 	_terrain_shader_material.set_shader_parameter("footprint_strength", terrain_footprint_strength)
+	_sync_terrain_footprint_shader_time()
 	var combined_footprints: Array[TerrainFootprint] = []
 	combined_footprints.append_array(_terrain_footprints)
 	combined_footprints.append_array(_retiring_terrain_footprints)
