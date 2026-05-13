@@ -4,4 +4,4 @@
 shading_mode = 0
 diffuse_mode = 3
 specular_mode = 1
-albedo_color = Color(0, 0, 1.1993155, 1)
+albedo_color = Color(0.82547504, 0.4786738, 0.13187252, 1)

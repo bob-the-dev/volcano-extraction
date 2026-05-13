@@ -1,6 +1,6 @@
 [gd_resource type="ShaderMaterial" format=3 uid="uid://dnokpgg4edfw7"]
 
-[ext_resource type="Shader" uid="uid://wjxqx5r7j11n" path="res://ps1_ocean.gdshader" id="1_a4mej"]
+[ext_resource type="Shader" uid="uid://cy7je2p7dnvdu" path="res://ps1_ocean.gdshader" id="1_a4mej"]
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_3v432"]
 frequency = 0.025
@@ -12,9 +12,9 @@ seamless = true
 [resource]
 render_priority = 1
 shader = ExtResource("1_a4mej")
-shader_parameter/wave_frequency = 1.915
-shader_parameter/wave_amplitude = 0.03
-shader_parameter/wave_speed = 0.66
+shader_parameter/wave_frequency = 2.0
+shader_parameter/wave_amplitude = 0.04
+shader_parameter/wave_speed = 0.4
 shader_parameter/noise_texture = SubResource("NoiseTexture3D_aywab")
 shader_parameter/caustic_color = Color(0.89411765, 0.21568628, 0.12156863, 1)
 shader_parameter/caustic_scale = 14.415
@@ -27,7 +27,7 @@ shader_parameter/deep_water_color = Color(0, 0, 0, 1)
 shader_parameter/pixelization_amount = 0.0
 shader_parameter/color_deep_fade_distance = 0.20000000298024
 shader_parameter/foam_color = Color(1.1312724, 0.20873256, 0, 1)
-shader_parameter/foam_scale = 16.035
-shader_parameter/foam_speed = 0.2
-shader_parameter/foam_distance = 0.0499999988824
-shader_parameter/foam_noise_influence = 0.02999999932944
+shader_parameter/foam_scale = 4.0
+shader_parameter/foam_speed = 0.1
+shader_parameter/foam_distance = 0.0999999977648
+shader_parameter/foam_noise_influence = 0.0499999988824

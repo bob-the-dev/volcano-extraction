@@ -6,6 +6,10 @@ extends Node3D
 # Signals
 signal map_regenerated()
 
+# Constants
+const DEFAULT_TERRAIN_PERIMETER_CELLS: int = 2
+const OUTER_TERRAIN_PERIMETER_DEPTH: int = 0
+
 # Inner classes
 class Room:
 	var position: Vector2
@@ -22,6 +26,46 @@ class Cell:
 	var type: String
 	var noise_value: float
 	var depth: int = 0  # Depth level from 0 (walls/shallow) to 4 (deep)
+
+
+class TerrainFootprint:
+	var position_x: float
+	var position_z: float
+	var spawn_time: float
+	var major_radius: float
+	var direction_x: float
+	var direction_z: float
+	var minor_radius: float
+
+	func _init(world_position: Vector3, spawn_time_seconds: float, move_direction: Vector3, major_radius_value: float, minor_radius_value: float) -> void:
+		var horizontal_direction: Vector2 = Vector2(move_direction.x, move_direction.z)
+		if horizontal_direction.length_squared() <= 0.0001:
+			horizontal_direction = Vector2(0.0, 1.0)
+		else:
+			horizontal_direction = horizontal_direction.normalized()
+
+		position_x = world_position.x
+		position_z = world_position.z
+		spawn_time = spawn_time_seconds
+		major_radius = major_radius_value
+		direction_x = horizontal_direction.x
+		direction_z = horizontal_direction.y
+		minor_radius = minor_radius_value
+
+	func to_primary_vector() -> Vector4:
+		return Vector4(position_x, position_z, spawn_time, major_radius)
+
+	func to_shape_vector() -> Vector4:
+		return Vector4(direction_x, direction_z, minor_radius, 0.0)
+
+	func with_spawn_time(new_spawn_time: float) -> TerrainFootprint:
+		return TerrainFootprint.new(
+			Vector3(position_x, 0.0, position_z),
+			new_spawn_time,
+			Vector3(direction_x, 0.0, direction_z),
+			major_radius,
+			minor_radius
+		)
 
 # Export parameters
 @export_group("Map Size")
@@ -50,11 +94,13 @@ class Cell:
 @export var base_thickness: float = 1.0
 @export var regenerate_on_ready: bool = true
 
-@export_subgroup("Tile Variation")
-## Maximum displacement for tile corners to create irregular shapes.
-@export var tile_corner_displacement: float = 0.08
-## Noise frequency for tile corner variation (higher = more variation, less smoothness).
-@export var tile_variation_frequency: float = 5.0
+@export_group("Terrain Perimeter")
+## Adds a non-walkable terrain collar around the generated terrain outline.
+@export_range(0, 4, 1) var terrain_perimeter_cells: int = DEFAULT_TERRAIN_PERIMETER_CELLS:
+	set(value):
+		terrain_perimeter_cells = value
+		if not Engine.is_editor_hint() and is_inside_tree() and not _is_regenerating:
+			call_deferred("_regenerate_map")
 
 @export_group("Depth Sources")
 ## Number of rooms to designate as lava sources (depth 4 centers)
@@ -81,10 +127,34 @@ class Cell:
 @export var export_heightmap_debug: bool = false
 
 @export_group("Rendering")
-## Enable floor tile rendering (disable to show only layered base mesh)
-@export var render_floor_tiles: bool = false
 ## Use layered depth rendering for base mesh
 @export var use_layered_depth: bool = true
+
+@export_group("Footprints")
+## Enable simple fading footprints on the terrain shader.
+@export var enable_terrain_footprints: bool = true
+## Maximum number of recent footprints kept visible in the terrain shader.
+@export_range(4, 32, 1) var terrain_footprint_count: int = 12:
+	set(value):
+		terrain_footprint_count = value
+		if not Engine.is_editor_hint() and is_inside_tree() and not _is_regenerating:
+			call_deferred("_regenerate_map")
+## Number of overflowed footprints allowed to remain while fading out.
+@export_range(1, 16, 1) var terrain_footprint_overflow_fade_count: int = 6:
+	set(value):
+		terrain_footprint_overflow_fade_count = value
+		if not Engine.is_editor_hint() and is_inside_tree() and not _is_regenerating:
+			call_deferred("_regenerate_map")
+## Lifetime in seconds for each footprint before it fully fades.
+@export var terrain_footprint_lifetime: float = 5.0
+## Fade time used when a footprint is pushed out by the visible count cap.
+@export_range(0.1, 5.0, 0.1) var terrain_footprint_overflow_fade_duration: float = 1.2
+## Half-length of each footprint ellipse along the movement direction.
+@export var terrain_footprint_length: float = 0.26
+## Half-width of each footprint ellipse across the movement direction.
+@export var terrain_footprint_width: float = 0.12
+## Darkness applied where the footprint mask is strongest.
+@export_range(0.0, 1.0, 0.01) var terrain_footprint_strength: float = 0.32
 
 @export_group("Scene Spawns")
 ## Optional scene to place at each deepest walkable source cell.
@@ -158,7 +228,7 @@ class Cell:
 @export var show_grid_debug: bool = true
 @export var grid_line_color: Color = Color(0, 1, 0, 0.5)
 @export var grid_line_width: float = 0.02
-## Show depth labels on floor tiles (0-4)
+## Show depth labels on terrain cells (0-4)
 @export var show_depth_labels: bool = true
 ## Color for depth labels
 @export var depth_label_color: Color = Color(1, 1, 1, 1)
@@ -167,7 +237,6 @@ class Cell:
 var _rng: RandomNumberGenerator
 var _noise: FastNoiseLite
 var _wall_scene: PackedScene
-var _floor_tile_scene: PackedScene
 var _spawned_objects: Array = []
 var _rooms: Array[Room] = []
 var _cells: Array[Cell] = []
@@ -184,6 +253,11 @@ var _target_water_height_level: float = 3.0
 var _default_water_surface_material: Material = preload("res://shaders/psOneLava.tres")
 var _floating_deepest_point_nodes: Array[Node3D] = []
 var _floating_motion_time: float = 0.0
+var _terrain_shader_material: ShaderMaterial
+var _terrain_footprints: Array[TerrainFootprint] = []
+var _retiring_terrain_footprints: Array[TerrainFootprint] = []
+var _terrain_grid_rect: Rect2i = Rect2i(0, 0, 0, 0)
+var _terrain_world_rect: Rect2 = Rect2(Vector2.ZERO, Vector2.ZERO)
 
 # Materials
 var _base_material: StandardMaterial3D
@@ -200,7 +274,6 @@ func _ready() -> void:
 	_sync_water_height_state()
 	
 	_wall_scene = load("res://procedural_wall.tscn")
-	_floor_tile_scene = load("res://procedural_floor_tile.tscn")
 	
 	# Load materials
 	_base_material = load("res://materials/wall.tres")
@@ -243,6 +316,11 @@ func _clear_map() -> void:
 		if is_instance_valid(obj):
 			obj.queue_free()
 	_spawned_objects.clear()
+	_terrain_shader_material = null
+	_terrain_footprints.clear()
+	_retiring_terrain_footprints.clear()
+	_terrain_grid_rect = Rect2i(0, 0, 0, 0)
+	_terrain_world_rect = Rect2(Vector2.ZERO, Vector2.ZERO)
 	_floating_deepest_point_nodes.clear()
 	_floating_motion_time = 0.0
 	_water_volume = null
@@ -465,7 +543,7 @@ func _spawn_geometry() -> void:
 	_select_depth_sources()
 	
 	# Calculate depths for all cells
-	print("[Map] Calculating tile depths...")
+	print("[Map] Calculating terrain depths...")
 	for cell in _cells:
 		if cell.is_wall:
 			# Walls always have depth 0
@@ -505,9 +583,6 @@ func _spawn_geometry() -> void:
 		elif cell.is_floor and not cell.is_lava:
 			# Always collect floor cells for pathfinding
 			_floor_cells.append(cell)
-			# Only spawn tile visuals if enabled
-			if render_floor_tiles:
-				_spawn_floor_tile(world_pos, cell.position)
 			_spawn_depth_label(world_pos, cell.depth)
 		elif cell.is_lava:
 			_spawn_depth_label(world_pos, cell.depth)
@@ -739,100 +814,14 @@ func _spawn_depth_label(world_pos: Vector3, depth: int) -> void:
 	label.rotation.x = -PI / 2.0  # Rotate 90 degrees to lay flat
 	_spawned_objects.append(label)
 
-
-## Spawns a floor tile at given position.
-func _spawn_floor_tile(pos: Vector3, grid_pos: Vector2) -> void:
-	if not _floor_tile_scene:
-		return
-	
-	var floor_tile: StaticBody3D = _floor_tile_scene.instantiate()
-	add_child(floor_tile)
-	floor_tile.add_to_group("floor_tile")
-	floor_tile.position = pos + Vector3(0, floor_height * 1.5, 0)
-	
-	# Set tile size to match cell size
-	floor_tile.tile_size = cell_size * 0.9
-	floor_tile.tile_height = floor_height
-	
-	# Apply corner displacement based on grid position
-	if tile_corner_displacement > 0.0:
-		var corner_offsets := _calculate_tile_corner_offsets(grid_pos)
-		floor_tile.corner_offset_tl = corner_offsets[0]
-		floor_tile.corner_offset_tr = corner_offsets[1]
-		floor_tile.corner_offset_br = corner_offsets[2]
-		floor_tile.corner_offset_bl = corner_offsets[3]
-	
-	# Regenerate mesh with new parameters
-	if floor_tile.has_method("_regenerate"):
-		floor_tile.call("_regenerate")
-	
-	# Get surface mesh for visibility and material settings
-	var surface_mesh: MeshInstance3D = floor_tile.get_node_or_null("Surface")
-	if surface_mesh:
-		# Prevent distance culling for all tiles
-		surface_mesh.extra_cull_margin = 1000.0
-		
-		# Make tiles transparent when debug labels are shown
-		if show_depth_labels:
-			var mat: StandardMaterial3D = StandardMaterial3D.new()
-			mat.albedo_color = Color(0.8, 0.8, 0.8, 0.3)  # Light gray, 30% opacity
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # Show both sides
-			surface_mesh.material_override = mat
-	
-	# Store tile center for click-to-move (pos is already the center of the cell)
-	floor_tile.set_meta("tile_center", pos + Vector3(0, floor_height, 0))
-	
-	_spawned_objects.append(floor_tile)
-
-
-## Calculates corner offsets for a tile based on grid position using noise.
-## Returns an array of 4 Vector2 offsets: [top-left, top-right, bottom-right, bottom-left]
-func _calculate_tile_corner_offsets(grid_pos: Vector2) -> Array[Vector2]:
-	var offsets: Array[Vector2] = []
-	
-	if not _noise:
-		# Return zero offsets if no noise is available
-		return [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
-	
-	# Sample noise at different offsets for each corner to get unique values
-	# Using prime number offsets to avoid patterns
-	var corner_seeds: Array[Vector2] = [
-		Vector2(0.0, 0.0),      # Top-left
-		Vector2(13.7, 0.0),     # Top-right
-		Vector2(13.7, 23.1),    # Bottom-right
-		Vector2(0.0, 23.1)      # Bottom-left
-	]
-	
-	for i in range(4):
-		var sample_pos: Vector2 = (grid_pos + corner_seeds[i]) * tile_variation_frequency
-		
-		# Sample noise twice (for x and y displacement)
-		var noise_x := _noise.get_noise_2d(sample_pos.x, sample_pos.y)
-		var noise_y := _noise.get_noise_2d(sample_pos.x + 100.0, sample_pos.y + 100.0)
-		
-		# Convert from [-1, 1] range to displacement range
-		var offset := Vector2(
-			noise_x * tile_corner_displacement,
-			noise_y * tile_corner_displacement
-		)
-		
-		offsets.append(offset)
-	
-	return offsets
-
-
 ## Spawns a custom base mesh with layered depth (terraced platforms).
 func _spawn_base_mesh() -> void:
 	if not use_layered_depth:
 		_spawn_base_mesh_flat()
 		return
 	
-	# Collect all cells that should have base underneath (walls + floors)
-	var base_cells: Array[Cell] = []
-	for cell in _cells:
-		if cell.is_wall or cell.is_floor:
-			base_cells.append(cell)
+	# Collect all cells that should have base underneath, including the synthetic perimeter ring.
+	var base_cells: Array[Cell] = _build_terrain_base_cells()
 	
 	if base_cells.is_empty():
 		return
@@ -854,23 +843,28 @@ func _spawn_base_mesh() -> void:
 	
 	# Step 3: Apply shader with displacement AND wall.tres material properties
 	var terrain_shader := _create_terrain_displacement_material()
+	_terrain_shader_material = terrain_shader
 	mesh_instance.material_override = terrain_shader
+	_sync_terrain_footprint_shader_parameters()
 	
 	# Step 4: Create collision that follows the displayed terrain surface
-	var grid_width: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
-	var grid_height: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
-	var playable_width: float = grid_width * cell_size
-	var playable_height: float = grid_height * cell_size
+	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
+	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
 	
 	var static_body := StaticBody3D.new()
 	var collision_shape := CollisionShape3D.new()
-	var terrain_collision_shape: Shape3D = _create_terrain_collision_shape(playable_width, playable_height, grid_width, grid_height)
+	var terrain_collision_shape: Shape3D = _create_terrain_collision_shape(
+		terrain_world_rect.size.x,
+		terrain_world_rect.size.y,
+		terrain_grid_rect.size.x,
+		terrain_grid_rect.size.y
+	)
 	if terrain_collision_shape:
 		collision_shape.shape = terrain_collision_shape
 	else:
 		var max_displacement: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
 		var box_shape := BoxShape3D.new()
-		box_shape.size = Vector3(playable_width, 0.2, playable_height)
+		box_shape.size = Vector3(terrain_world_rect.size.x, 0.2, terrain_world_rect.size.y)
 		collision_shape.shape = box_shape
 		collision_shape.position = Vector3(0, max_displacement, 0)
 		push_warning("[Heightmap Terrain] Falling back to flat collision because terrain collision generation failed")
@@ -888,6 +882,207 @@ func _spawn_base_mesh() -> void:
 	print("[Heightmap Terrain] Terrain mesh with terrain-following collision added to scene")
 	
 	print("[Heightmap Terrain] Created terrain mesh with heightmap texture")
+
+func _get_terrain_grid_rect() -> Rect2i:
+	return _terrain_grid_rect
+
+
+func _get_terrain_world_rect() -> Rect2:
+	return _terrain_world_rect
+
+
+func _build_terrain_base_cells() -> Array[Cell]:
+	var base_cells: Array[Cell] = []
+	var occupied_positions: Dictionary = {}
+	for cell in _cells:
+		if cell.is_wall or cell.is_floor:
+			base_cells.append(cell)
+			var grid_pos: Vector2i = Vector2i(int(cell.position.x), int(cell.position.y))
+			occupied_positions[_grid_position_key(grid_pos)] = grid_pos
+
+	if base_cells.is_empty():
+		_terrain_grid_rect = Rect2i(0, 0, 0, 0)
+		_terrain_world_rect = Rect2(Vector2.ZERO, Vector2.ZERO)
+		return base_cells
+
+	var perimeter_positions: Dictionary = _build_terrain_perimeter_positions(occupied_positions)
+	for perimeter_key in perimeter_positions.keys():
+		var perimeter_grid_pos: Vector2i = perimeter_positions[perimeter_key]
+		base_cells.append(_create_outer_terrain_perimeter_cell(perimeter_grid_pos))
+
+	_update_terrain_bounds_from_cells(base_cells)
+	return base_cells
+
+
+func _build_terrain_perimeter_positions(occupied_positions: Dictionary) -> Dictionary:
+	var perimeter_positions: Dictionary = {}
+	var perimeter_layer_count: int = maxi(terrain_perimeter_cells, 0)
+	if perimeter_layer_count <= 0 or occupied_positions.is_empty():
+		return perimeter_positions
+
+	var search_rect: Rect2i = _build_terrain_perimeter_search_rect(occupied_positions, perimeter_layer_count)
+	var external_empty_positions: Dictionary = _flood_fill_external_empty_positions(search_rect, occupied_positions)
+	var current_frontier: Array[Vector2i] = []
+	var all_neighbor_offsets: Array[Vector2i] = _get_all_grid_neighbor_offsets()
+
+	for occupied_key in occupied_positions.keys():
+		var occupied_grid_pos: Vector2i = occupied_positions[occupied_key]
+		for neighbor_offset in all_neighbor_offsets:
+			var neighbor_grid_pos: Vector2i = occupied_grid_pos + neighbor_offset
+			if not search_rect.has_point(neighbor_grid_pos):
+				continue
+
+			var neighbor_key: String = _grid_position_key(neighbor_grid_pos)
+			if not external_empty_positions.has(neighbor_key) or perimeter_positions.has(neighbor_key):
+				continue
+
+			perimeter_positions[neighbor_key] = neighbor_grid_pos
+			current_frontier.append(neighbor_grid_pos)
+
+	for layer_index in range(1, perimeter_layer_count):
+		var next_frontier: Array[Vector2i] = []
+		for frontier_grid_pos in current_frontier:
+			for neighbor_offset in all_neighbor_offsets:
+				var neighbor_grid_pos: Vector2i = frontier_grid_pos + neighbor_offset
+				if not search_rect.has_point(neighbor_grid_pos):
+					continue
+
+				var neighbor_key: String = _grid_position_key(neighbor_grid_pos)
+				if not external_empty_positions.has(neighbor_key) or perimeter_positions.has(neighbor_key):
+					continue
+
+				perimeter_positions[neighbor_key] = neighbor_grid_pos
+				next_frontier.append(neighbor_grid_pos)
+
+		if next_frontier.is_empty():
+			break
+
+		current_frontier = next_frontier
+
+	return perimeter_positions
+
+
+func _build_terrain_perimeter_search_rect(occupied_positions: Dictionary, perimeter_layer_count: int) -> Rect2i:
+	var terrain_rect: Rect2i = _calculate_grid_rect_from_position_lookup(occupied_positions)
+	var search_padding: int = perimeter_layer_count + 1
+	return Rect2i(
+		terrain_rect.position.x - search_padding,
+		terrain_rect.position.y - search_padding,
+		terrain_rect.size.x + (search_padding * 2),
+		terrain_rect.size.y + (search_padding * 2)
+	)
+
+
+func _flood_fill_external_empty_positions(search_rect: Rect2i, occupied_positions: Dictionary) -> Dictionary:
+	var external_empty_positions: Dictionary = {}
+	var queue: Array[Vector2i] = [search_rect.position]
+	var queue_index: int = 0
+	var cardinal_neighbor_offsets: Array[Vector2i] = _get_cardinal_grid_neighbor_offsets()
+
+	while queue_index < queue.size():
+		var current_grid_pos: Vector2i = queue[queue_index]
+		queue_index += 1
+
+		if not search_rect.has_point(current_grid_pos):
+			continue
+
+		var current_key: String = _grid_position_key(current_grid_pos)
+		if occupied_positions.has(current_key) or external_empty_positions.has(current_key):
+			continue
+
+		external_empty_positions[current_key] = current_grid_pos
+		for neighbor_offset in cardinal_neighbor_offsets:
+			var neighbor_grid_pos: Vector2i = current_grid_pos + neighbor_offset
+			if search_rect.has_point(neighbor_grid_pos):
+				queue.append(neighbor_grid_pos)
+
+	return external_empty_positions
+
+
+func _calculate_grid_rect_from_position_lookup(position_lookup: Dictionary) -> Rect2i:
+	if position_lookup.is_empty():
+		return Rect2i(0, 0, 0, 0)
+
+	var has_position: bool = false
+	var min_x: int = 0
+	var min_y: int = 0
+	var max_x: int = 0
+	var max_y: int = 0
+	for position_key in position_lookup.keys():
+		var grid_pos: Vector2i = position_lookup[position_key]
+		if not has_position:
+			min_x = grid_pos.x
+			min_y = grid_pos.y
+			max_x = grid_pos.x
+			max_y = grid_pos.y
+			has_position = true
+			continue
+
+		min_x = mini(min_x, grid_pos.x)
+		min_y = mini(min_y, grid_pos.y)
+		max_x = maxi(max_x, grid_pos.x)
+		max_y = maxi(max_y, grid_pos.y)
+
+	return Rect2i(min_x, min_y, (max_x - min_x) + 1, (max_y - min_y) + 1)
+
+
+func _update_terrain_bounds_from_cells(cells: Array[Cell]) -> void:
+	if cells.is_empty():
+		_terrain_grid_rect = Rect2i(0, 0, 0, 0)
+		_terrain_world_rect = Rect2(Vector2.ZERO, Vector2.ZERO)
+		return
+
+	var position_lookup: Dictionary = {}
+	for cell in cells:
+		var grid_pos: Vector2i = Vector2i(int(cell.position.x), int(cell.position.y))
+		position_lookup[_grid_position_key(grid_pos)] = grid_pos
+
+	_terrain_grid_rect = _calculate_grid_rect_from_position_lookup(position_lookup)
+	var offset: float = edge_margin * cell_size
+	_terrain_world_rect = Rect2(
+		Vector2(
+			_terrain_grid_rect.position.x * cell_size + offset,
+			_terrain_grid_rect.position.y * cell_size + offset
+		),
+		Vector2(
+			_terrain_grid_rect.size.x * cell_size,
+			_terrain_grid_rect.size.y * cell_size
+		)
+	)
+
+
+func _create_outer_terrain_perimeter_cell(grid_pos: Vector2i) -> Cell:
+	var perimeter_cell: Cell = Cell.new()
+	perimeter_cell.position = Vector2(float(grid_pos.x), float(grid_pos.y))
+	perimeter_cell.filled = true
+	perimeter_cell.is_floor = false
+	perimeter_cell.is_wall = false
+	perimeter_cell.is_lava = false
+	perimeter_cell.type = "terrain_perimeter"
+	perimeter_cell.noise_value = 0.0
+	perimeter_cell.depth = OUTER_TERRAIN_PERIMETER_DEPTH
+	return perimeter_cell
+
+
+func _grid_position_key(grid_pos: Vector2i) -> String:
+	return "%d,%d" % [grid_pos.x, grid_pos.y]
+
+
+func _get_cardinal_grid_neighbor_offsets() -> Array[Vector2i]:
+	return [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
+
+
+func _get_all_grid_neighbor_offsets() -> Array[Vector2i]:
+	return [
+		Vector2i(-1, -1),
+		Vector2i(0, -1),
+		Vector2i(1, -1),
+		Vector2i(-1, 0),
+		Vector2i(1, 0),
+		Vector2i(-1, 1),
+		Vector2i(0, 1),
+		Vector2i(1, 1)
+	]
 
 
 ## Spawns the configured scene at each deepest walkable source cell.
@@ -1451,9 +1646,9 @@ func _sample_heightmap_bilinear(image: Image, uv: Vector2) -> float:
 
 ## Generates a heightmap texture from cell depth data
 func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
-	# Calculate actual grid dimensions (matching cell generation)
-	var grid_width: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
-	var grid_height: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
+	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
+	var grid_width: int = terrain_grid_rect.size.x
+	var grid_height: int = terrain_grid_rect.size.y
 	var tex_width: int = grid_width * pixels_per_cell
 	var tex_height: int = grid_height * pixels_per_cell
 	
@@ -1465,8 +1660,8 @@ func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	
 	# Fill image with depth values
 	for cell in cells:
-		var grid_x: int = int(cell.position.x)
-		var grid_y: int = int(cell.position.y)
+		var grid_x: int = int(cell.position.x) - terrain_grid_rect.position.x
+		var grid_y: int = int(cell.position.y) - terrain_grid_rect.position.y
 		
 		# Calculate pixel region for this cell
 		var px_start_x: int = grid_x * pixels_per_cell
@@ -1562,18 +1757,17 @@ func _create_terrain_mesh() -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
 	var plane_mesh := PlaneMesh.new()
 	
-	# Calculate actual playable area dimensions (without edge margins)
-	var grid_width: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
-	var grid_height: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
-	var playable_width: float = grid_width * cell_size
-	var playable_height: float = grid_height * cell_size
+	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
+	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
+	var terrain_width: float = terrain_world_rect.size.x
+	var terrain_height: float = terrain_world_rect.size.y
 	
-	# Size the plane to cover only the playable area
-	plane_mesh.size = Vector2(playable_width, playable_height)
+	# Size the plane to cover the generated area plus the outer edge expansion ring.
+	plane_mesh.size = Vector2(terrain_width, terrain_height)
 	
 	# Subdivide based on grid and mesh_subdivisions
-	plane_mesh.subdivide_width = grid_width * mesh_subdivisions
-	plane_mesh.subdivide_depth = grid_height * mesh_subdivisions
+	plane_mesh.subdivide_width = terrain_grid_rect.size.x * mesh_subdivisions
+	plane_mesh.subdivide_depth = terrain_grid_rect.size.y * mesh_subdivisions
 	
 	mesh_instance.mesh = plane_mesh
 	
@@ -1581,15 +1775,14 @@ func _create_terrain_mesh() -> MeshInstance3D:
 	# Shader displaces upward from 0 (depth 4) to amplitude (depth 0)
 	# So mesh starts at floor_height - amplitude, depth 0 reaches floor_height
 	var max_displacement: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
-	var offset: float = edge_margin * cell_size
 	mesh_instance.position = Vector3(
-		playable_width * 0.5 + offset,
+		terrain_world_rect.position.x + (terrain_width * 0.5),
 		floor_height - max_displacement,
-		playable_height * 0.5 + offset
+		terrain_world_rect.position.y + (terrain_height * 0.5)
 	)
 	mesh_instance.extra_cull_margin = 1000.0
 	
-	print("[Terrain Mesh] Created plane ", playable_width, "x", playable_height, " with ", plane_mesh.subdivide_width, "x", plane_mesh.subdivide_depth, " subdivisions")
+	print("[Terrain Mesh] Created plane ", terrain_width, "x", terrain_height, " with ", plane_mesh.subdivide_width, "x", plane_mesh.subdivide_depth, " subdivisions")
 	print("[Terrain Mesh] Max displacement: ", max_displacement, " units")
 	print("[Terrain Mesh] Mesh base Y: ", floor_height - max_displacement, " (depth 4)")
 	print("[Terrain Mesh] After displacement Y: ", floor_height, " (depth 0, wall level)")
@@ -1601,12 +1794,14 @@ func _create_terrain_mesh() -> MeshInstance3D:
 func _create_terrain_displacement_material() -> ShaderMaterial:
 	var shader_material := ShaderMaterial.new()
 	var shader := Shader.new()
+	var footprint_uniforms: Array[String] = []
+	var footprint_contributions: Array[String] = []
+	for index in range(_get_total_terrain_footprint_shader_slots()):
+		footprint_uniforms.append("uniform vec4 footprint_data_%d = vec4(0.0, 0.0, -1000.0, 0.0);" % index)
+		footprint_uniforms.append("uniform vec4 footprint_shape_%d = vec4(0.0, 1.0, 0.0, 0.0);" % index)
+		footprint_contributions.append("\tfootprint_mask += compute_footprint_mask(footprint_data_%d, footprint_shape_%d, world_xz);" % [index, index])
 	
-	# Calculate playable area size for shader
-	var grid_width: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
-	var grid_height: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
-	var playable_width: float = grid_width * cell_size
-	var playable_height: float = grid_height * cell_size
+	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
 	
 	# Get wall.tres material properties
 	var wall_albedo: Color = Color(0.46, 0.18, 0.0, 1.0)
@@ -1643,8 +1838,13 @@ uniform float bottom_darkness = 0.45;
 uniform float depth_gradient_strength = 1.0;
 uniform float darkness_noise_scale = 18.0;
 uniform float darkness_noise_strength = 0.16;
+uniform float footprint_lifetime = 5.0;
+uniform float footprint_strength = 0.32;
+%s
 
 varying vec2 heightmap_uv;
+varying vec2 world_xz;
+varying float terrain_upness;
 
 float hash12(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -1665,11 +1865,38 @@ float value_noise(vec2 uv) {
 	return mix(bottom_mix, top_mix, smooth_local.y);
 }
 
+float compute_footprint_mask(vec4 footprint_data, vec4 footprint_shape, vec2 sample_world_xz) {
+	if (footprint_data.w <= 0.0 || footprint_shape.z <= 0.0) {
+		return 0.0;
+	}
+
+	float age = TIME - footprint_data.z;
+	if (age < 0.0 || age > footprint_lifetime) {
+		return 0.0;
+	}
+
+	vec2 forward_axis = footprint_shape.xy;
+	if (length(forward_axis) <= 0.0001) {
+		forward_axis = vec2(0.0, 1.0);
+	} else {
+		forward_axis = normalize(forward_axis);
+	}
+	vec2 right_axis = vec2(-forward_axis.y, forward_axis.x);
+	vec2 sample_offset = sample_world_xz - footprint_data.xy;
+	float local_right = dot(sample_offset, right_axis);
+	float local_forward = dot(sample_offset, forward_axis);
+	float ellipse_distance = length(vec2(local_right / footprint_shape.z, local_forward / footprint_data.w));
+	float radial_mask = 1.0 - smoothstep(0.55, 1.0, ellipse_distance);
+	float fade_mask = 1.0 - clamp(age / footprint_lifetime, 0.0, 1.0);
+	return radial_mask * fade_mask;
+}
+
 void vertex() {
 	// VERTEX coordinates for PlaneMesh range from -plane_size/2 to +plane_size/2
 	// Convert to UV space (0 to 1)
 	vec2 uv = (VERTEX.xz / plane_size) + 0.5;
 	heightmap_uv = uv;
+	world_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
 	
 	// Sample heightmap and displace vertex upward
 	float height_value = texture(heightmap, uv).r;
@@ -1692,6 +1919,7 @@ void vertex() {
 	// Cross product gives normal
 	vec3 calculated_normal = normalize(cross(tangent_z, tangent_x));
 	NORMAL = calculated_normal;
+	terrain_upness = clamp(calculated_normal.y, 0.0, 1.0);
 }
 
 void fragment() {
@@ -1702,26 +1930,33 @@ void fragment() {
 	float noise_offset = (combined_noise - 0.5) * darkness_noise_strength;
 	float depth_factor = clamp((1.0 - height_value) * depth_gradient_strength + noise_offset, 0.0, 1.0);
 	vec3 depth_tint = mix(vec3(bottom_darkness), vec3(1.0), 1.0 - depth_factor);
+	float footprint_mask = 0.0;
+%s
+	float slope_mask = smoothstep(0.2, 0.7, terrain_upness);
+	float final_footprint_mask = clamp(footprint_mask * slope_mask, 0.0, 1.0);
+	vec3 footprint_tint = vec3(1.0 - footprint_strength * final_footprint_mask);
 
 	// Apply wall.tres material properties
-	ALBEDO = albedo_color.rgb * depth_tint;
-	EMISSION = emission_color.rgb * emission_energy * depth_tint;
+	ALBEDO = albedo_color.rgb * depth_tint * footprint_tint;
+	EMISSION = emission_color.rgb * emission_energy * depth_tint * footprint_tint;
 	ROUGHNESS = roughness_value;
 	METALLIC = metallic_value;
 	SPECULAR = specular_value;
 }
-"""
+""" % ["\n".join(footprint_uniforms), "\n".join(footprint_contributions)]
 	
 	shader_material.shader = shader
 	shader_material.set_shader_parameter("heightmap", _heightmap_texture)
 	shader_material.set_shader_parameter("amplitude", depth_step_height * 4.0 * heightmap_displacement_amplitude)
-	shader_material.set_shader_parameter("plane_size", Vector2(playable_width, playable_height))
+	shader_material.set_shader_parameter("plane_size", terrain_world_rect.size)
 	shader_material.set_shader_parameter("albedo_color", wall_albedo)
 	shader_material.set_shader_parameter("emission_color", wall_emission)
 	shader_material.set_shader_parameter("emission_energy", wall_emission_energy)
 	shader_material.set_shader_parameter("roughness_value", wall_roughness)
 	shader_material.set_shader_parameter("metallic_value", wall_metallic)
 	shader_material.set_shader_parameter("specular_value", wall_metallic_specular)
+	shader_material.set_shader_parameter("footprint_lifetime", terrain_footprint_lifetime)
+	shader_material.set_shader_parameter("footprint_strength", terrain_footprint_strength)
 	
 	print("[Terrain Shader] Material properties from wall.tres:")
 	print("  Albedo: ", wall_albedo)
@@ -1735,16 +1970,95 @@ void fragment() {
 	return shader_material
 
 
+func register_terrain_footprint(world_position: Vector3, move_direction: Vector3, major_radius: float = -1.0, minor_radius: float = -1.0) -> void:
+	if not enable_terrain_footprints:
+		return
+
+	var footprint_major_radius: float = major_radius
+	if footprint_major_radius <= 0.0:
+		footprint_major_radius = terrain_footprint_length
+
+	var footprint_minor_radius: float = minor_radius
+	if footprint_minor_radius <= 0.0:
+		footprint_minor_radius = terrain_footprint_width
+
+	var footprint_time: float = Time.get_ticks_msec() / 1000.0
+	_prune_expired_terrain_footprints(footprint_time)
+	var footprint_data: TerrainFootprint = TerrainFootprint.new(
+		world_position,
+		footprint_time,
+		move_direction,
+		footprint_major_radius,
+		footprint_minor_radius
+	)
+	if _terrain_footprints.size() >= terrain_footprint_count:
+		var retiring_footprint: TerrainFootprint = _terrain_footprints[0]
+		_terrain_footprints.remove_at(0)
+		_queue_retiring_terrain_footprint(retiring_footprint, footprint_time)
+	_terrain_footprints.append(footprint_data)
+	_sync_terrain_footprint_shader_parameters()
+
+
+func _sync_terrain_footprint_shader_parameters() -> void:
+	if _terrain_shader_material == null:
+		return
+
+	_terrain_shader_material.set_shader_parameter("footprint_lifetime", terrain_footprint_lifetime)
+	_terrain_shader_material.set_shader_parameter("footprint_strength", terrain_footprint_strength)
+	var combined_footprints: Array[TerrainFootprint] = []
+	combined_footprints.append_array(_terrain_footprints)
+	combined_footprints.append_array(_retiring_terrain_footprints)
+	for index in range(_get_total_terrain_footprint_shader_slots()):
+		var uniform_name: String = "footprint_data_%d" % index
+		var shape_uniform_name: String = "footprint_shape_%d" % index
+		var footprint_value: Vector4 = Vector4(0.0, 0.0, -1000.0, 0.0)
+		var footprint_shape_value: Vector4 = Vector4(0.0, 1.0, 0.0, 0.0)
+		if index < combined_footprints.size():
+			footprint_value = combined_footprints[index].to_primary_vector()
+			footprint_shape_value = combined_footprints[index].to_shape_vector()
+		_terrain_shader_material.set_shader_parameter(uniform_name, footprint_value)
+		_terrain_shader_material.set_shader_parameter(shape_uniform_name, footprint_shape_value)
+
+
+func _queue_retiring_terrain_footprint(footprint_data: TerrainFootprint, current_time: float) -> void:
+	var overflow_fade_duration: float = min(terrain_footprint_overflow_fade_duration, terrain_footprint_lifetime)
+	if overflow_fade_duration <= 0.0:
+		return
+
+	var fade_timestamp: float = current_time - max(terrain_footprint_lifetime - overflow_fade_duration, 0.0)
+	var retiring_footprint: TerrainFootprint = footprint_data.with_spawn_time(fade_timestamp)
+	if _retiring_terrain_footprints.size() >= terrain_footprint_overflow_fade_count:
+		_retiring_terrain_footprints.remove_at(0)
+	_retiring_terrain_footprints.append(retiring_footprint)
+
+
+func _prune_expired_terrain_footprints(current_time: float) -> void:
+	var active_footprints: Array[TerrainFootprint] = []
+	for footprint_data in _terrain_footprints:
+		if current_time - footprint_data.spawn_time <= terrain_footprint_lifetime:
+			active_footprints.append(footprint_data)
+	_terrain_footprints = active_footprints
+
+	var retiring_footprints: Array[TerrainFootprint] = []
+	for footprint_data in _retiring_terrain_footprints:
+		if current_time - footprint_data.spawn_time <= terrain_footprint_lifetime:
+			retiring_footprints.append(footprint_data)
+	_retiring_terrain_footprints = retiring_footprints
+
+
+func _get_total_terrain_footprint_shader_slots() -> int:
+	return terrain_footprint_count + terrain_footprint_overflow_fade_count
+
+
 ## Spawns a flat base mesh (legacy/fallback).
 func _spawn_base_mesh_flat() -> void:
-	# Collect all cells that should have base underneath (walls + floors, not empty space)
-	var base_cells: Array[Cell] = []
-	for cell in _cells:
-		if cell.is_wall or cell.is_floor:
-			base_cells.append(cell)
+	# Collect all cells that should have base underneath, including the synthetic perimeter ring.
+	var base_cells: Array[Cell] = _build_terrain_base_cells()
 	
 	if base_cells.is_empty():
 		return
+
+	var base_cell_lookup: Dictionary = _build_cell_position_lookup(base_cells)
 	
 	# Create a mesh instance to hold our base
 	var mesh_instance := MeshInstance3D.new()
@@ -1764,13 +2078,13 @@ func _spawn_base_mesh_flat() -> void:
 		var inset_bottom := 0.0
 		
 		# Check each direction for perimeter
-		if not _has_filled_neighbor(cell, Vector2(-1, 0)):  # Left
+		if not _has_position_lookup_neighbor(base_cell_lookup, cell.position, Vector2i(-1, 0)):  # Left
 			inset_left = inset
-		if not _has_filled_neighbor(cell, Vector2(1, 0)):   # Right
+		if not _has_position_lookup_neighbor(base_cell_lookup, cell.position, Vector2i(1, 0)):   # Right
 			inset_right = inset
-		if not _has_filled_neighbor(cell, Vector2(0, -1)):  # Top
+		if not _has_position_lookup_neighbor(base_cell_lookup, cell.position, Vector2i(0, -1)):  # Top
 			inset_top = inset
-		if not _has_filled_neighbor(cell, Vector2(0, 1)):   # Bottom
+		if not _has_position_lookup_neighbor(base_cell_lookup, cell.position, Vector2i(0, 1)):   # Bottom
 			inset_bottom = inset
 		
 		var half_size := cell_size * 0.5
@@ -1823,7 +2137,7 @@ func _spawn_base_mesh_flat() -> void:
 ## Places the player on a random walkable floor tile.
 func _place_player_on_floor() -> void:
 	if _floor_cells.is_empty():
-		push_warning("No floor tiles available to place player!")
+		push_warning("No walkable floor cells available to place player!")
 		return
 	
 	# Find player node using multiple fallback methods
@@ -1869,17 +2183,13 @@ func _get_world_surface_height(world_xz: Vector2) -> float:
 	if not use_layered_depth or _heightmap_image == null:
 		return floor_height
 
-	var grid_width: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
-	var grid_height: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
-	var playable_width: float = grid_width * cell_size
-	var playable_height: float = grid_height * cell_size
-	if playable_width <= 0.0 or playable_height <= 0.0:
+	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
+	if terrain_world_rect.size.x <= 0.0 or terrain_world_rect.size.y <= 0.0:
 		return floor_height
 
-	var offset: float = edge_margin * cell_size
 	var uv: Vector2 = Vector2(
-		(world_xz.x - offset) / playable_width,
-		(world_xz.y - offset) / playable_height
+		(world_xz.x - terrain_world_rect.position.x) / terrain_world_rect.size.x,
+		(world_xz.y - terrain_world_rect.position.y) / terrain_world_rect.size.y
 	)
 	var height_value: float = _sample_heightmap_bilinear(_heightmap_image, uv)
 	return (floor_height - _get_max_terrain_displacement()) + (height_value * _get_max_terrain_displacement())
@@ -1912,15 +2222,18 @@ func _has_neighbours(cell: Cell, property: String, max_distance: float) -> bool:
 	return false
 
 
-## Helper: Check if cell has a filled neighbor in a specific direction.
-func _has_filled_neighbor(cell: Cell, direction: Vector2) -> bool:
-	var neighbor_pos: Vector2 = cell.position + direction
-	
-	for other in _cells:
-		if other.position == neighbor_pos and (other.is_wall or other.is_floor):
-			return true
-	
-	return false
+func _build_cell_position_lookup(cells: Array[Cell]) -> Dictionary:
+	var position_lookup: Dictionary = {}
+	for cell in cells:
+		var grid_pos: Vector2i = Vector2i(int(cell.position.x), int(cell.position.y))
+		position_lookup[_grid_position_key(grid_pos)] = true
+	return position_lookup
+
+
+## Helper: Check if a cell lookup contains a neighbor in a specific direction.
+func _has_position_lookup_neighbor(position_lookup: Dictionary, grid_pos: Vector2, direction: Vector2i) -> bool:
+	var neighbor_pos: Vector2i = Vector2i(int(grid_pos.x) + direction.x, int(grid_pos.y) + direction.y)
+	return position_lookup.has(_grid_position_key(neighbor_pos))
 
 
 ## Counts neighboring floor cells in the 8-cell neighborhood around a grid position.

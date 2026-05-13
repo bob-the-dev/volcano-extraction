@@ -2,6 +2,7 @@ extends CharacterBody3D
 
 @onready var animation_player: AnimationPlayer = $AnimationPlayer
 @onready var camera: Camera3D = get_viewport().get_camera_3d()
+@onready var visual_root: Node3D = $"character-human"
 
 @export var can_move : bool = true
 @export var has_gravity : bool = true
@@ -15,10 +16,22 @@ extends CharacterBody3D
 @export var procedural_map: Node3D = null
 
 @export_group("Movement Physics")
-## Maximum height the player can step up automatically (in units)
-@export var step_height : float = 0.3
 ## How long to snap to floor when going down slopes
 @export var floor_snap : float = 0.1
+## How quickly the visible model aligns to the ground normal.
+@export var ground_alignment_speed : float = 10.0
+
+@export_group("Footprints")
+## Enable terrain footprint emission while grounded and moving.
+@export var emit_terrain_footprints : bool = true
+## Time in seconds between footprint stamps while grounded and moving.
+@export var footstep_interval : float = 0.18
+## Minimum horizontal speed required before footprints are emitted.
+@export var footstep_min_speed : float = 1.0
+## Side offset used to alternate left and right footsteps.
+@export var footstep_lateral_offset : float = 0.18
+## Forward offset used to place footprints closer to the character's feet.
+@export var footstep_forward_offset : float = 0.0
 
 @export_group("Input Actions")
 ## Name of Input Action to move Left.
@@ -88,6 +101,9 @@ var _current_path: Array[Vector3] = []
 var _current_path_index: int = 0
 var _grid_cell_size: float = 2.0  # Default, will be updated from map
 var _debug_waypoint_markers: Array[Node3D] = []
+var _footstep_interval_timer: float = 0.0
+var _was_emitting_terrain_footprints: bool = false
+var _use_left_footstep: bool = true
 
 func _ready() -> void:
 	# Add to player group for easy lookup
@@ -406,6 +422,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	var position_before_move: Vector3 = global_position
+
 	# Apply gravity
 	if has_gravity and not is_on_floor():
 		velocity += get_gravity() * delta
@@ -416,18 +434,94 @@ func _physics_process(delta: float) -> void:
 	else:
 		_handle_direct_input(delta)
 	
-	# Store state before moving
-	var was_on_floor := is_on_floor()
-	var horizontal_velocity := Vector2(velocity.x, velocity.z).length()
-	
 	# Move and slide
 	move_and_slide()
-	
-	# Step-up assist: if on floor, trying to move, but hit a wall, boost upward
-	if was_on_floor and is_on_wall() and horizontal_velocity > 0.1:
-		# Apply upward boost to climb small ledges
-		velocity.y = step_height * 10.0
-		move_and_slide()
+	_align_visual_to_ground(delta)
+	_update_terrain_footprints(delta, position_before_move)
+
+
+func _align_visual_to_ground(delta: float) -> void:
+	if not visual_root:
+		return
+
+	var target_normal: Vector3 = Vector3.UP
+	if is_on_floor():
+		target_normal = get_floor_normal()
+
+	var player_basis: Basis = global_transform.basis.orthonormalized()
+	var local_up: Vector3 = (player_basis.inverse() * target_normal).normalized()
+	var local_forward: Vector3 = Vector3.FORWARD
+	var projected_forward: Vector3 = local_forward - local_up * local_forward.dot(local_up)
+	if projected_forward.length_squared() < 0.0001:
+		projected_forward = Vector3.RIGHT.cross(local_up)
+	if projected_forward.length_squared() < 0.0001:
+		projected_forward = Vector3.FORWARD
+	projected_forward = projected_forward.normalized()
+
+	var target_back: Vector3 = -projected_forward
+	var target_right: Vector3 = local_up.cross(target_back).normalized()
+	var target_basis: Basis = Basis(target_right, local_up, target_back).orthonormalized()
+	var current_quaternion: Quaternion = visual_root.transform.basis.get_rotation_quaternion()
+	var target_quaternion: Quaternion = target_basis.get_rotation_quaternion()
+	var weight: float = clamp(ground_alignment_speed * delta, 0.0, 1.0)
+	visual_root.transform.basis = Basis(current_quaternion.slerp(target_quaternion, weight))
+
+
+func _update_terrain_footprints(delta: float, position_before_move: Vector3) -> void:
+	if not emit_terrain_footprints:
+		return
+	if not procedural_map or not procedural_map.has_method("register_terrain_footprint"):
+		return
+
+	var interval_duration: float = max(footstep_interval, 0.001)
+	var horizontal_velocity: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+	var should_emit_footprints: bool = is_on_floor() and horizontal_velocity.length() >= footstep_min_speed
+	if not should_emit_footprints:
+		_was_emitting_terrain_footprints = false
+		_footstep_interval_timer = 0.0
+		return
+
+	var current_position: Vector3 = global_position
+	var movement_segment: Vector3 = current_position - position_before_move
+	var move_direction: Vector3 = horizontal_velocity.normalized()
+	if movement_segment.length_squared() > 0.0001:
+		move_direction = movement_segment.normalized()
+
+	if not _was_emitting_terrain_footprints:
+		_emit_starting_terrain_footprints(position_before_move, move_direction)
+		_use_left_footstep = true
+		_was_emitting_terrain_footprints = true
+		_footstep_interval_timer = interval_duration * 0.5
+		return
+
+	var elapsed_until_next_footstep: float = interval_duration - _footstep_interval_timer
+	while elapsed_until_next_footstep <= delta:
+		var interpolation_weight: float = 1.0
+		if delta > 0.0001:
+			interpolation_weight = clamp(elapsed_until_next_footstep / delta, 0.0, 1.0)
+		var emit_position: Vector3 = position_before_move.lerp(current_position, interpolation_weight)
+		_emit_terrain_footprint(emit_position, move_direction)
+		elapsed_until_next_footstep += interval_duration
+
+	_footstep_interval_timer = fposmod(_footstep_interval_timer + delta, interval_duration)
+
+
+func _emit_starting_terrain_footprints(current_position: Vector3, move_direction: Vector3) -> void:
+	_emit_terrain_footprint_side(current_position, move_direction, -1.0)
+	_emit_terrain_footprint_side(current_position, move_direction, 1.0)
+
+
+func _emit_terrain_footprint(current_position: Vector3, move_direction: Vector3) -> void:
+	var lateral_sign: float = -1.0 if _use_left_footstep else 1.0
+	_emit_terrain_footprint_side(current_position, move_direction, lateral_sign)
+	_use_left_footstep = not _use_left_footstep
+
+
+func _emit_terrain_footprint_side(current_position: Vector3, move_direction: Vector3, lateral_sign: float) -> void:
+	var lateral_direction: Vector3 = Vector3(-move_direction.z, 0.0, move_direction.x)
+	var forward_offset: Vector3 = move_direction * footstep_forward_offset
+	var footstep_position: Vector3 = current_position + lateral_direction * footstep_lateral_offset * lateral_sign + forward_offset
+	procedural_map.register_terrain_footprint(footstep_position, move_direction)
 
 
 ## Handle traditional WASD-style input
