@@ -9,6 +9,7 @@ signal map_regenerated()
 # Constants
 const DEFAULT_TERRAIN_PERIMETER_CELLS: int = 2
 const OUTER_TERRAIN_PERIMETER_DEPTH: int = 0
+const HEIGHTMAP_DETAIL_NOISE_WORLD_SCALE: float = 4.0
 
 # Inner classes
 class Room:
@@ -123,6 +124,8 @@ class TerrainFootprint:
 @export_range(1, 4) var mesh_subdivisions: int = 2
 ## Heightmap displacement multiplier (higher = more dramatic height differences)
 @export_range(0.1, 10.0) var heightmap_displacement_amplitude: float = 5.0
+## Signed per-pixel heightmap noise added before blur. Negative values invert the extra detail.
+@export_range(-0.5, 0.5, 0.001) var heightmap_noise_displacement_strength: float = 0.0
 ## Export heightmap texture for debugging
 @export var export_heightmap_debug: bool = false
 
@@ -197,6 +200,10 @@ class TerrainFootprint:
 @export var render_water: bool = true
 ## Water surface height in depth levels, where 0 is highest and 4 is lowest.
 @export_range(0.0, 4.0, 0.05) var water_height_level: float = 3.0
+## Rising speed in depth levels per second. Lower values produce a slower climb.
+@export_range(0.0, 0.5, 0.001) var water_rise_speed_levels_per_second: float = 0.02
+## Immediately reset the water back to depth level 3.0 when it reaches the surface.
+@export var debug_loop_rising_water: bool = false
 ## Amount to move the water height per button press, measured in depth levels.
 @export_range(0.05, 1.0, 0.05) var water_height_step_levels: float = 0.25
 ## Interpolation speed used when animating the visible water height toward the target level.
@@ -293,6 +300,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_floating_motion_time += delta
+	_update_rising_water(delta)
 	_update_water_height_animation(delta)
 	_update_floating_deepest_point_scenes()
 	_sync_terrain_footprint_shader_time()
@@ -1457,6 +1465,27 @@ func _sync_water_height_state() -> void:
 	_displayed_water_height_level = clamped_level
 
 
+## Gradually raises the water toward depth 0 and optionally loops back for debugging.
+func _update_rising_water(delta: float) -> void:
+	if water_rise_speed_levels_per_second <= 0.0:
+		return
+
+	if _target_water_height_level <= 0.0:
+		if debug_loop_rising_water:
+			water_height_level = 4.0
+			_target_water_height_level = 4.0
+			_displayed_water_height_level = 4.0
+			_refresh_water_volume()
+		return
+
+	var next_target_level: float = maxf(0.0, _target_water_height_level - (water_rise_speed_levels_per_second * delta))
+	if is_equal_approx(next_target_level, _target_water_height_level):
+		return
+
+	water_height_level = next_target_level
+	_target_water_height_level = next_target_level
+
+
 ## Animates the visible water level toward the target and refreshes the water mesh.
 func _update_water_height_animation(delta: float) -> void:
 	if _cells.is_empty() or not render_water or not use_layered_depth:
@@ -1714,6 +1743,16 @@ func _sample_heightmap_bilinear(image: Image, uv: Vector2) -> float:
 	return lerpf(top, bottom, y_lerp)
 
 
+func _get_heightmap_detail_noise(world_x: float, world_z: float) -> float:
+	if _noise == null or is_zero_approx(heightmap_noise_displacement_strength):
+		return 0.0
+
+	var sample_x: float = (world_x + 137.0) * HEIGHTMAP_DETAIL_NOISE_WORLD_SCALE
+	var sample_z: float = (world_z + 281.0) * HEIGHTMAP_DETAIL_NOISE_WORLD_SCALE
+	var detail_noise: float = _noise.get_noise_2d(sample_x, sample_z)
+	return detail_noise * heightmap_noise_displacement_strength
+
+
 ## Generates a heightmap texture from cell depth data
 func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
@@ -1739,7 +1778,7 @@ func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 		
 		# Convert depth (0-4) to grayscale (1.0 = depth 0/highest, 0.0 = depth 4/lowest)
 		var depth_normalized: float = 1.0 - (float(cell.depth) / 4.0)
-		var pixel_color := Color(depth_normalized, 0, 0, 1)
+		var pixel_color: Color = Color(depth_normalized, 0, 0, 1)
 		
 		# Fill the cell's pixel block
 		for py in range(pixels_per_cell):
@@ -1749,6 +1788,9 @@ func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 				if img_x < tex_width and img_y < tex_height:
 					image.set_pixel(img_x, img_y, pixel_color)
 	
+	if not is_zero_approx(heightmap_noise_displacement_strength):
+		image = _apply_heightmap_detail_noise(image, terrain_grid_rect)
+
 	# Apply Gaussian blur for smooth transitions
 	if blur_radius > 0:
 		print("[Heightmap] Applying Gaussian blur with radius ", blur_radius)
@@ -1774,6 +1816,27 @@ func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	var texture := ImageTexture.create_from_image(image)
 	print("[Heightmap] Texture generated successfully")
 	return texture
+
+
+func _apply_heightmap_detail_noise(source_image: Image, terrain_grid_rect: Rect2i) -> Image:
+	var width: int = source_image.get_width()
+	var height: int = source_image.get_height()
+	if width <= 0 or height <= 0:
+		return source_image
+
+	var result_image: Image = source_image.duplicate()
+	for y in range(height):
+		for x in range(width):
+			var grid_x: float = float(x) / float(pixels_per_cell)
+			var grid_y: float = float(y) / float(pixels_per_cell)
+			var world_x: float = (float(terrain_grid_rect.position.x) + grid_x + 0.5) * cell_size + (edge_margin * cell_size)
+			var world_z: float = (float(terrain_grid_rect.position.y) + grid_y + 0.5) * cell_size + (edge_margin * cell_size)
+			var detail_noise: float = _get_heightmap_detail_noise(world_x, world_z)
+			var current_height: float = source_image.get_pixel(x, y).r
+			var displaced_height: float = clampf(current_height + detail_noise, 0.0, 1.0)
+			result_image.set_pixel(x, y, Color(displaced_height, 0, 0, 1))
+
+	return result_image
 
 
 ## Applies Gaussian blur to an image
