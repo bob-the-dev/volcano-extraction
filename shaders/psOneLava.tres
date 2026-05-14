@@ -1,6 +1,6 @@
 [gd_resource type="ShaderMaterial" format=3 uid="uid://dnokpgg4edfw7"]
 
-[ext_resource type="Shader" uid="uid://cy7je2p7dnvdu" path="res://ps1_ocean.gdshader" id="1_a4mej"]
+[ext_resource type="Shader" uid="uid://cy7je2p7dnvdu" path="res://shaders/psOneWater/ps1_ocean.gdshader" id="1_a4mej"]
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_3v432"]
 frequency = 0.025
@@ -17,18 +17,17 @@ shader_parameter/wave_amplitude = 0.04
 shader_parameter/wave_speed = 0.4
 shader_parameter/noise_texture = SubResource("NoiseTexture3D_aywab")
 shader_parameter/caustic_color = Color(0, 0, 0, 1)
-shader_parameter/caustic_scale = 19.11
-shader_parameter/caustic_speed = 0.01
-shader_parameter/caustic_intensity = 0.3690000175275
-shader_parameter/caustic_sharpness = 0.966000045885
+shader_parameter/caustic_scale = 40.0
+shader_parameter/caustic_speed = 0.02
+shader_parameter/caustic_intensity = 1.3410000636975
+shader_parameter/caustic_sharpness = 0.9390000446025
 shader_parameter/caustic_falloff = 0.0
-shader_parameter/water_color = Color(0, 0, 0, 1)
-shader_parameter/deep_water_color = Color(0.46212214, 0.1384274, 9.62615e-08, 1)
+shader_parameter/lava_color = Color(0, 0, 0, 1)
+shader_parameter/deep_lava_color = Color(1.4369954, 0.5413267, 0, 1)
 shader_parameter/pixelization_amount = 0.0
-shader_parameter/color_deep_fade_distance = 1.0000000149012
-shader_parameter/far_clip_depth_threshold = 0.9995
-shader_parameter/foam_color = Color(0, 0, 0, 1)
-shader_parameter/foam_scale = 48.09
+shader_parameter/color_deep_fade_distance = 0.70000001043084
+shader_parameter/foam_color = Color(0.5091667, 0.33151606, 0.27848497, 1)
+shader_parameter/foam_scale = 40.0
 shader_parameter/foam_speed = 0.05
-shader_parameter/foam_distance = 0.07999999821184
-shader_parameter/foam_noise_influence = 0.06999999843536
+shader_parameter/foam_distance = 0.0499999988824
+shader_parameter/foam_noise_influence = 0.02999999932944

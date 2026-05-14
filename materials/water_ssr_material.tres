@@ -1,6 +1,6 @@
 [gd_resource type="ShaderMaterial" format=3 uid="uid://dl7f3lbnvxlda"]
 
-[ext_resource type="Shader" uid="uid://bq11fagql2gd4" path="res://materials/water_ssr.gdshader" id="1_water_shader"]
+[ext_resource type="Shader" uid="uid://bq11fagql2gd4" path="res://materials/lava_ssr.gdshader" id="1_lava_shader"]
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_wave_a"]
 seed = 11
@@ -20,7 +20,7 @@ seamless = true
 
 [resource]
 render_priority = 0
-shader = ExtResource("1_water_shader")
+shader = ExtResource("1_lava_shader")
 shader_parameter/color_shallow = Color(0.38, 0.08, 0.05, 1)
 shader_parameter/color_deep = Color(0.1, 0.01, 0.01, 1)
 shader_parameter/transparency = 0.6

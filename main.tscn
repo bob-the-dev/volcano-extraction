@@ -1,10 +1,11 @@
 [gd_scene format=3 uid="uid://bgjs7cfay65c2"]
 
 [ext_resource type="PackedScene" uid="uid://bknmich6p0hft" path="res://player.tscn" id="2_0xm2m"]
+[ext_resource type="PackedScene" uid="uid://dp4dtin18drb7" path="res://blender/fatman.fbx" id="3_7mycd"]
 [ext_resource type="Script" uid="uid://djs5e7lkbo60e" path="res://scripts/procedural_map.gd" id="7_5vw27"]
 [ext_resource type="Script" uid="uid://lvdibt8falnc" path="res://scripts/Minimap.gd" id="8_minimap"]
-[ext_resource type="Script" uid="uid://cjwi6sdjl523b" path="res://scripts/WaterControls.gd" id="9_water_controls"]
-[ext_resource type="Material" uid="uid://dnokpgg4edfw7" path="res://shaders/psOneLava.tres" id="10_water_material"]
+[ext_resource type="Script" uid="uid://cjwi6sdjl523b" path="res://scripts/WaterControls.gd" id="9_lava_controls"]
+[ext_resource type="Material" uid="uid://dnokpgg4edfw7" path="res://shaders/psOneLava.tres" id="10_lava_material"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_as1t3"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
@@ -16,10 +17,14 @@ sky_material = SubResource("ProceduralSkyMaterial_as1t3")
 [sub_resource type="Environment" id="Environment_c5lsl"]
 background_mode = 1
 sky = SubResource("Sky_744mi")
+ambient_light_source = 1
+reflected_light_source = 2
 tonemap_mode = 2
+fog_light_color = Color(0, 0, 0, 1)
 volumetric_fog_enabled = true
 volumetric_fog_albedo = Color(0.14044744, 0.14044744, 0.14044744, 1)
-adjustment_enabled = true
+adjustment_brightness = 0.89
+adjustment_saturation = 1.31
 
 [node name="Main" type="Node3D" unique_id=1074138897]
 
@@ -28,14 +33,13 @@ environment = SubResource("Environment_c5lsl")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=886841073]
 transform = Transform3D(-4.3711385e-08, 0.7615383, -0.64811987, 0, 0.64811987, 0.7615383, 0.99999994, 3.3287897e-08, -2.833022e-08, 0, 0, 0)
-light_volumetric_fog_energy = 2.246
-light_angular_distance = 7.54
+light_volumetric_fog_energy = 2.82
 shadow_enabled = true
-shadow_normal_bias = 4.695
-shadow_opacity = 0.54
-shadow_blur = 1.368
+shadow_opacity = 0.42
+shadow_blur = 0.487
 
 [node name="Player" parent="." unique_id=790875423 instance=ExtResource("2_0xm2m")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.059508264, 0.17126751)
 wall_min_slide_angle = 0.34906584
 floor_max_angle = 0.80285144
 floor_snap_length = 0.2
@@ -61,68 +65,108 @@ click_particle_count = 45
 [node name="Procedural Map" type="Node3D" parent="." unique_id=1594020206]
 transform = Transform3D(1, 0, 0, 0, 1, 1.4901161e-08, 0, 0, 1, 0, 0, 2.3841858e-07)
 script = ExtResource("7_5vw27")
+min_map_size = null
+max_map_size = null
+cell_size = null
 median_rooms = 20
 edge_margin = 6
 random_seed = 11670
-terrain_perimeter_cells = 1
+randomize_seed = null
+floor_height = null
+base_thickness = null
+regenerate_on_ready = null
+terrain_perimeter_cells = null
 num_lava_sources = 4
 num_highground = 3
-depth_source_influence = 5.0
-wall_bias_strength = 3.0
-depth_step_height = 0.2
+depth_source_influence = null
+wall_bias_strength = null
+depth_step_height = 0.25
 pixels_per_cell = 16
-blur_radius = 10
-mesh_subdivisions = 4
-heightmap_displacement_amplitude = 2.125
-heightmap_noise_displacement_strength = 0.15000000000000002
+blur_radius = 8
+heightmap_displacement_amplitude = 2.5
+heightmap_noise_displacement_strength = 0.25
 export_heightmap_debug = true
+use_layered_depth = null
 exploration_reveal_radius_cells = 4
+enable_terrain_footprints = null
 terrain_footprint_count = 32
 terrain_footprint_overflow_fade_count = 16
 terrain_footprint_lifetime = 11.0
 terrain_footprint_overflow_fade_duration = 1.5
+terrain_footprint_length = null
+terrain_footprint_width = null
 terrain_footprint_strength = 0.47
-water_height_level = 3.85
-debug_loop_rising_water = true
-water_surface_offset = 0.125
-water_surface_min_margin_world = 100.0
-water_material = ExtResource("10_water_material")
+deepest_point_scene = ExtResource("3_7mycd")
+deepest_point_material_override = null
+deepest_point_match_player_material = null
+deepest_point_scene_scale = null
+deepest_point_scene_height_offset = -0.3
+deepest_point_float_on_lava = null
+deepest_point_scene_disable_collision = null
+deepest_point_lava_float_offset = null
+deepest_point_bob_amplitude = null
+deepest_point_bob_speed = null
+deepest_point_rotate_while_floating = null
+deepest_point_rock_x_amplitude_degrees = null
+deepest_point_rock_z_amplitude_degrees = null
+deepest_point_rock_speed_min = null
+deepest_point_rock_speed_max = null
+lava_height_level = 3.85
+lava_auto_rise_enabled = false
+lava_rise_speed_levels_per_second = null
+debug_loop_rising_lava = false
+lava_height_step_levels = null
+lava_height_lerp_speed = null
+lava_surface_offset = 0.125
+lava_surface_lowering = null
+lava_surface_margin_ratio = null
+lava_surface_min_margin_world = 100.0
+lava_surface_max_subdivisions = null
+lava_material = ExtResource("10_lava_material")
+lava_color = null
+lava_emission_color = null
 scatter_internal_walls = false
+internal_wall_noise_scale = null
+internal_wall_noise_threshold = null
+internal_wall_min_floor_neighbors = null
 debug_internal_walls = false
 show_grid_debug = false
+grid_line_color = null
+grid_line_width = null
 show_depth_labels = false
+depth_label_color = null
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=289701640]
 
-[node name="WaterControls" type="PanelContainer" parent="HUD" unique_id=1333429544]
-visible = false
+[node name="LavaControls" type="PanelContainer" parent="HUD" unique_id=1333429544]
+visible = true
 offset_right = 263.0
 offset_bottom = 52.0
-script = ExtResource("9_water_controls")
+script = ExtResource("9_lava_controls")
 
-[node name="MarginContainer" type="MarginContainer" parent="HUD/WaterControls" unique_id=330288455]
+[node name="MarginContainer" type="MarginContainer" parent="HUD/LavaControls" unique_id=330288455]
 layout_mode = 2
 theme_override_constants/margin_left = 10
 theme_override_constants/margin_top = 8
 theme_override_constants/margin_right = 10
 theme_override_constants/margin_bottom = 8
 
-[node name="HBoxContainer" type="HBoxContainer" parent="HUD/WaterControls/MarginContainer" unique_id=561701933]
+[node name="HBoxContainer" type="HBoxContainer" parent="HUD/LavaControls/MarginContainer" unique_id=561701933]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="RaiseButton" type="Button" parent="HUD/WaterControls/MarginContainer/HBoxContainer" unique_id=55717153]
+[node name="RaiseButton" type="Button" parent="HUD/LavaControls/MarginContainer/HBoxContainer" unique_id=55717153]
 layout_mode = 2
-text = "Raise Water"
+text = "Raise Lava"
 
-[node name="ValueLabel" type="Label" parent="HUD/WaterControls/MarginContainer/HBoxContainer" unique_id=331580416]
+[node name="ValueLabel" type="Label" parent="HUD/LavaControls/MarginContainer/HBoxContainer" unique_id=331580416]
 layout_mode = 2
-text = "Water 3.00"
+text = "Lava 3.00"
 vertical_alignment = 1
 
-[node name="LowerButton" type="Button" parent="HUD/WaterControls/MarginContainer/HBoxContainer" unique_id=140533573]
+[node name="LowerButton" type="Button" parent="HUD/LavaControls/MarginContainer/HBoxContainer" unique_id=140533573]
 layout_mode = 2
-text = "Lower Water"
+text = "Lower Lava"
 
 [node name="Minimap" type="Control" parent="HUD" unique_id=2120884738]
 layout_mode = 3

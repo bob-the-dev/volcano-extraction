@@ -2248,7 +2248,7 @@ libraries/ = SubResource("AnimationLibrary_3sg01")
 [node name="SpringArmPivot" type="Node3D" parent="." unique_id=86174034]
 transform = Transform3D(1, 0, 0, 0, 0.08715581, 0.99619484, 0, -0.99619484, 0.08715581, 0, 0, 0)
 script = ExtResource("3_7d0qx")
-anchor_offset = Vector3(0, 12, 0)
+anchor_offset = Vector3(0, 3, 0)
 orbit_ease_speed = 10.0
 
 [node name="SpringArm3D" type="SpringArm3D" parent="SpringArmPivot" unique_id=1819220982]
@@ -2259,10 +2259,11 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.24, 0, 0)
 
 [node name="Camera3D" type="Camera3D" parent="SpringArmPivot" unique_id=1473785525]
 transform = Transform3D(1, 0, 0, 0, 0.5735765, -0.8191521, 0, 0.8191521, 0.5735765, 0, 0, 0)
-v_offset = -9.285
+v_offset = -11.0
 current = true
-far = 35.0
+far = 30.0
 script = ExtResource("4_c2t1o")
+spring_arm = NodePath("../SpringArm3D/SpringPosition")
 perimeter_fog_far_margin = 8.0
 perimeter_fog_height = 15.0
 perimeter_fog_density = 0.48

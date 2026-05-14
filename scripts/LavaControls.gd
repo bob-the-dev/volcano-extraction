@@ -13,9 +13,6 @@ func _ready() -> void:
 	anchors_preset = Control.PRESET_TOP_LEFT
 	offset_left = 16.0
 	offset_top = 16.0
-	focus_mode = Control.FOCUS_NONE
-	_raise_button.focus_mode = Control.FOCUS_NONE
-	_lower_button.focus_mode = Control.FOCUS_NONE
 
 	_raise_button.pressed.connect(_on_raise_pressed)
 	_lower_button.pressed.connect(_on_lower_pressed)

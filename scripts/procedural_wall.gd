@@ -37,13 +37,13 @@ extends StaticBody3D
 			call_deferred("_regenerate")
 
 @export_group("Geometry Configuration")
-@export_range(4, 12) var radial_segments: int = 8:
+@export_range(4, 24) var radial_segments: int = 8:
 	set(value):
 		radial_segments = value
 		if Engine.is_editor_hint():
 			call_deferred("_regenerate")
 
-@export_range(2, 8) var height_segments: int = 4:
+@export_range(2, 24) var height_segments: int = 4:
 	set(value):
 		height_segments = value
 		if Engine.is_editor_hint():
@@ -129,18 +129,44 @@ extends StaticBody3D
 		if Engine.is_editor_hint():
 			call_deferred("_regenerate")
 
+@export_group("Material Sync")
+@export var source_surface_material: StandardMaterial3D
+@export var rough_surface_shader: Shader = preload("res://shaders/procedural_wall_rough.gdshader")
+
 # Node references
 @onready var surface_mesh: MeshInstance3D = $Surface
 @onready var collision_shape: CollisionShape3D = $CollisionShape3D
 
 # Private variables
 var _is_regenerating: bool = false
+var _rough_surface_material: ShaderMaterial
+var _last_source_albedo: Color = Color(-1.0, -1.0, -1.0, -1.0)
+var _last_source_emission: Color = Color(-1.0, -1.0, -1.0, -1.0)
+var _last_source_emission_enabled: bool = false
+var _last_source_emission_energy: float = -1.0
+var _last_source_roughness: float = -1.0
+var _last_source_metallic: float = -1.0
+var _last_source_specular: float = -1.0
 
 
 func _ready() -> void:
+	set_process(Engine.is_editor_hint())
+	_apply_surface_material(surface_mesh, true)
+
 	# Generate meshes on ready
 	if is_inside_tree():
 		_regenerate()
+
+
+func _process(_delta: float) -> void:
+	if not Engine.is_editor_hint():
+		return
+
+	_apply_surface_material(surface_mesh)
+
+
+func sync_surface_material() -> void:
+	_apply_surface_material(surface_mesh, true)
 
 
 ## Regenerates all meshes. Called when parameters change in editor.
@@ -162,9 +188,64 @@ func _regenerate() -> void:
 		return
 	
 	_is_regenerating = true
+	_apply_surface_material(mesh_node, true)
 	_generate_wall(mesh_node)
 	_generate_collision(mesh_node, collision_node)
 	_is_regenerating = false
+
+
+func _apply_surface_material(mesh_node: MeshInstance3D, force_sync: bool = false) -> void:
+	if mesh_node == null:
+		return
+
+	if source_surface_material == null or rough_surface_shader == null:
+		mesh_node.material_override = source_surface_material
+		return
+
+	if _rough_surface_material == null:
+		_rough_surface_material = ShaderMaterial.new()
+		_rough_surface_material.shader = rough_surface_shader
+		force_sync = true
+
+	_sync_surface_material_from_source(force_sync)
+	if mesh_node.material_override != _rough_surface_material:
+		mesh_node.material_override = _rough_surface_material
+
+
+func _sync_surface_material_from_source(force_sync: bool = false) -> void:
+	if source_surface_material == null or _rough_surface_material == null:
+		return
+
+	var emission_color: Color = Color(0.0, 0.0, 0.0, 1.0)
+	var emission_energy: float = 0.0
+	if source_surface_material.emission_enabled:
+		emission_color = source_surface_material.emission
+		emission_energy = source_surface_material.emission_energy_multiplier
+
+	if not force_sync \
+	and _last_source_albedo == source_surface_material.albedo_color \
+	and _last_source_emission == emission_color \
+	and _last_source_emission_enabled == source_surface_material.emission_enabled \
+	and is_equal_approx(_last_source_emission_energy, emission_energy) \
+	and is_equal_approx(_last_source_roughness, source_surface_material.roughness) \
+	and is_equal_approx(_last_source_metallic, source_surface_material.metallic) \
+	and is_equal_approx(_last_source_specular, source_surface_material.metallic_specular):
+		return
+
+	_rough_surface_material.set_shader_parameter("albedo_color", source_surface_material.albedo_color)
+	_rough_surface_material.set_shader_parameter("emission_color", emission_color)
+	_rough_surface_material.set_shader_parameter("emission_energy", emission_energy)
+	_rough_surface_material.set_shader_parameter("roughness_value", source_surface_material.roughness)
+	_rough_surface_material.set_shader_parameter("metallic_value", source_surface_material.metallic)
+	_rough_surface_material.set_shader_parameter("specular_value", source_surface_material.metallic_specular)
+
+	_last_source_albedo = source_surface_material.albedo_color
+	_last_source_emission = emission_color
+	_last_source_emission_enabled = source_surface_material.emission_enabled
+	_last_source_emission_energy = emission_energy
+	_last_source_roughness = source_surface_material.roughness
+	_last_source_metallic = source_surface_material.metallic
+	_last_source_specular = source_surface_material.metallic_specular
 
 
 ## Generates the complete volumetric wall with base and pillars.

@@ -105,9 +105,13 @@ extends CharacterBody3D
 
 @export_group("Pathfinding Costs")
 ## Cost multiplier per depth level (higher depth = deeper = more cost)
-@export var depth_cost_multiplier: float = 2.0
+@export var depth_cost_multiplier: float = 1.1
 ## Base cost for depth 0 (highest) tiles
 @export var floor_base_cost: float = 1.0
+## Extra cost applied once a traversed cell is currently below the visible lava surface.
+@export var submerged_lava_penalty_base_cost: float = 8.0
+## Additional cost applied per depth level a traversed cell sits below the visible lava surface.
+@export var submerged_lava_penalty_per_level: float = 18.0
 
 # Click-to-move variables
 var _target_position: Vector3
@@ -121,6 +125,7 @@ var _target_indicator: Node3D = null  # Floating indicator mesh above target
 # Pathfinding variables
 var _astar: AStar2D = AStar2D.new()
 var _pathfinding_initialized: bool = false
+var _cell_depth_by_id: Dictionary = {}
 var _current_path: Array[Vector3] = []
 var _current_path_index: int = 0
 var _grid_cell_size: float = 2.0  # Default, will be updated from map
@@ -220,6 +225,7 @@ func _initialize_pathfinding() -> void:
 	
 	# Clear existing AStar nodes
 	_astar.clear()
+	_cell_depth_by_id.clear()
 	
 	# Get cell size from map
 	if "cell_size" in procedural_map:
@@ -245,7 +251,6 @@ func _initialize_pathfinding() -> void:
 	
 	# Combine floor and lava cells for pathfinding
 	var walkable_cells: Array = floor_cells + lava_cells
-	var cell_depth_by_id: Dictionary = {}
 	
 	# Add all walkable cells to AStar with appropriate weights
 	var added_count: int = 0
@@ -259,9 +264,9 @@ func _initialize_pathfinding() -> void:
 			# Set weight based on depth (Dijkstra-style weighted pathfinding)
 			# Deeper cells (higher depth value) have higher cost
 			var depth: int = cell.depth if "depth" in cell else 0
-			var weight: float = floor_base_cost + (depth * depth_cost_multiplier)
+			var weight: float = _get_path_cost_for_depth(depth, 4.0)
 			_astar.set_point_weight_scale(point_id, weight)
-			cell_depth_by_id[point_id] = depth
+			_cell_depth_by_id[point_id] = depth
 			
 			if depth >= 0 and depth <= 4:
 				depth_counts[depth] += 1
@@ -286,7 +291,7 @@ func _initialize_pathfinding() -> void:
 			# Connect all floor cells including lava
 			var grid_pos: Vector2 = cell.position
 			var point_id: int = _grid_to_id(grid_pos)
-			var current_depth: int = int(cell_depth_by_id.get(point_id, 0))
+			var current_depth: int = int(_cell_depth_by_id.get(point_id, 0))
 			
 			# Check 4 orthogonal neighbors
 			var neighbors: Array[Vector2] = [
@@ -299,7 +304,7 @@ func _initialize_pathfinding() -> void:
 			for neighbor_pos in neighbors:
 				var neighbor_id: int = _grid_to_id(neighbor_pos)
 				if _astar.has_point(neighbor_id):
-					var neighbor_depth: int = int(cell_depth_by_id.get(neighbor_id, 0))
+					var neighbor_depth: int = int(_cell_depth_by_id.get(neighbor_id, 0))
 					if _can_traverse_depth(current_depth, neighbor_depth):
 						if not _astar.are_points_connected(point_id, neighbor_id, false):
 							_astar.connect_points(point_id, neighbor_id, false)
@@ -312,6 +317,32 @@ func _initialize_pathfinding() -> void:
 	
 	_pathfinding_initialized = true
 	print("[Pathfinding] ✓ Initialization complete with ", _astar.get_point_count(), " walkable cells")
+
+
+func _get_path_cost_for_depth(depth: int, current_lava_height_level: float) -> float:
+	var path_cost: float = floor_base_cost + (float(depth) * depth_cost_multiplier)
+	var submerged_depth_levels: float = maxf(0.0, float(depth) - current_lava_height_level)
+	if submerged_depth_levels > 0.001:
+		path_cost += submerged_lava_penalty_base_cost + (submerged_depth_levels * submerged_lava_penalty_per_level)
+	return path_cost
+
+
+func _get_current_lava_height_level() -> float:
+	if procedural_map != null and procedural_map.has_method("get_lava_height_level"):
+		return float(procedural_map.call("get_lava_height_level"))
+	return 4.0
+
+
+func _is_depth_submerged(depth: int, current_lava_height_level: float) -> bool:
+	return (float(depth) - current_lava_height_level) > 0.001
+
+
+func _refresh_pathfinding_costs() -> void:
+	var current_lava_height_level: float = _get_current_lava_height_level()
+	for point_id_variant in _cell_depth_by_id.keys():
+		var point_id: int = int(point_id_variant)
+		var depth: int = int(_cell_depth_by_id.get(point_id, 0))
+		_astar.set_point_weight_scale(point_id, _get_path_cost_for_depth(depth, current_lava_height_level))
 
 
 func _can_traverse_depth(from_depth: int, to_depth: int) -> bool:
@@ -366,6 +397,9 @@ func _find_path(from_world: Vector3, to_world: Vector3) -> Array[Vector3]:
 	if not _pathfinding_initialized:
 		print("[Pathfinding] ERROR: Pathfinding not initialized yet")
 		return path
+
+	_refresh_pathfinding_costs()
+	var current_lava_height_level: float = _get_current_lava_height_level()
 	
 	print("[Pathfinding] Finding path from ", from_world, " to ", to_world)
 	
@@ -402,22 +436,21 @@ func _find_path(from_world: Vector3, to_world: Vector3) -> Array[Vector3]:
 		print("[Pathfinding] ERROR: No path found from ", from_grid, " to ", to_grid)
 		return path
 	
-	# Convert grid path to world positions and count lava tiles
-	var lava_tiles_in_path := 0
+	# Convert grid path to world positions and count currently submerged cells.
+	var submerged_tiles_in_path: int = 0
 	for grid_pos in grid_path:
 		path.append(_grid_to_world(grid_pos))
 		
-		# Check if this waypoint is on a lava tile
-		var point_id := _grid_to_id(grid_pos)
-		var weight := _astar.get_point_weight_scale(point_id)
-		if weight > floor_base_cost * 2.0:  # If weight is significantly higher, it's lava
-			lava_tiles_in_path += 1
+		var point_id: int = _grid_to_id(grid_pos)
+		var depth: int = int(_cell_depth_by_id.get(point_id, 0))
+		if _is_depth_submerged(depth, current_lava_height_level):
+			submerged_tiles_in_path += 1
 	
 	print("[Pathfinding] ✓ Path found with ", path.size(), " waypoints")
-	if lava_tiles_in_path > 0:
-		print("[Pathfinding]   ⚠ Path crosses ", lava_tiles_in_path, " lava tiles (unavoidable)")
+	if submerged_tiles_in_path > 0:
+		print("[Pathfinding]   ⚠ Path crosses ", submerged_tiles_in_path, " currently submerged cells")
 	else:
-		print("[Pathfinding]   ✓ Path avoids all lava tiles")
+		print("[Pathfinding]   ✓ Path avoids all currently submerged cells")
 	
 	return path
 

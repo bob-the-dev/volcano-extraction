@@ -5,6 +5,7 @@ extends Node3D
 
 # Signals
 signal map_regenerated()
+signal generation_stage_changed(step_index: int, step_count: int, title: String, description: String)
 
 # Constants
 const DEFAULT_TERRAIN_PERIMETER_CELLS: int = 2
@@ -95,6 +96,14 @@ class TerrainFootprint:
 @export var base_thickness: float = 1.0
 @export var regenerate_on_ready: bool = true
 
+@export_group("Materials")
+@export var solid_ground_material: StandardMaterial3D = preload("res://materials/solid_ground.tres"):
+	set(value):
+		solid_ground_material = value
+		_base_material = solid_ground_material
+		if is_inside_tree():
+			_sync_ground_surface_material_parameters(true)
+
 @export_group("Terrain Perimeter")
 ## Adds a non-walkable terrain collar around the generated terrain outline.
 @export_range(0, 4, 1) var terrain_perimeter_cells: int = DEFAULT_TERRAIN_PERIMETER_CELLS:
@@ -121,7 +130,7 @@ class TerrainFootprint:
 ## Blur radius in pixels (higher = smoother but less defined plateaus)
 @export_range(0, 20) var blur_radius: int = 5
 ## Grid mesh subdivisions (vertices per cell, higher = smoother terrain)
-@export_range(1, 4) var mesh_subdivisions: int = 2
+@export_range(1, 128) var mesh_subdivisions: int = 48
 ## Heightmap displacement multiplier (higher = more dramatic height differences)
 @export_range(0.1, 10.0) var heightmap_displacement_amplitude: float = 5.0
 ## Signed per-pixel heightmap noise added before blur. Negative values invert the extra detail.
@@ -174,12 +183,12 @@ class TerrainFootprint:
 @export var deepest_point_scene_scale: Vector3 = Vector3(8.909, 8.909, 8.909)
 ## Extra world-space height added after sampling the terrain surface.
 @export var deepest_point_scene_height_offset: float = 0.0
-## Keep deepest-point scenes afloat on the generated water surface.
-@export var deepest_point_float_on_water: bool = true
+## Keep deepest-point scenes afloat on the generated lava surface.
+@export var deepest_point_float_on_lava: bool = true
 ## Disable physics collision on procedurally spawned deepest-point scenes.
 @export var deepest_point_scene_disable_collision: bool = true
-## Extra vertical offset from the water surface for floating deepest-point scenes. Negative values sink them deeper.
-@export var deepest_point_water_float_offset: float = -0.08
+## Extra vertical offset from the lava surface for floating deepest-point scenes. Negative values sink them deeper.
+@export var deepest_point_lava_float_offset: float = -0.08
 ## Vertical bob amplitude used to sell buoyancy.
 @export_range(0.0, 1.0, 0.01) var deepest_point_bob_amplitude: float = 0.08
 ## Bob speed used for floating deepest-point scenes.
@@ -195,35 +204,37 @@ class TerrainFootprint:
 ## Maximum rocking speed while floating, in cycles per second.
 @export_range(0.0, 5.0, 0.05) var deepest_point_rock_speed_max: float = 0.65
 
-@export_group("Water")
-## Spawn a translucent water volume over submerged terrain.
-@export var render_water: bool = true
-## Water surface height in depth levels, where 0 is highest and 4 is lowest.
-@export_range(0.0, 4.0, 0.05) var water_height_level: float = 3.0
+@export_group("Lava")
+## Spawn a translucent lava volume over submerged terrain.
+@export var render_lava: bool = true
+## Lava surface height in depth levels, where 0 is highest and 4 is lowest.
+@export_range(0.0, 4.0, 0.05) var lava_height_level: float = 3.0
+## Automatically pushes the lava upward over time.
+@export var lava_auto_rise_enabled: bool = false
 ## Rising speed in depth levels per second. Lower values produce a slower climb.
-@export_range(0.0, 0.5, 0.001) var water_rise_speed_levels_per_second: float = 0.02
-## Immediately reset the water back to depth level 3.0 when it reaches the surface.
-@export var debug_loop_rising_water: bool = false
-## Amount to move the water height per button press, measured in depth levels.
-@export_range(0.05, 1.0, 0.05) var water_height_step_levels: float = 0.25
-## Interpolation speed used when animating the visible water height toward the target level.
-@export_range(0.5, 20.0, 0.1) var water_height_lerp_speed: float = 6.0
-## Lift the water surface slightly to avoid z-fighting on the waterline.
-@export var water_surface_offset: float = 0.02
+@export_range(0.0, 0.5, 0.001) var lava_rise_speed_levels_per_second: float = 0.02
+## Immediately reset the lava back to depth level 3.0 when it reaches the surface.
+@export var debug_loop_rising_lava: bool = false
+## Amount to move the lava height per button press, measured in depth levels.
+@export_range(0.05, 1.0, 0.05) var lava_height_step_levels: float = 0.25
+## Interpolation speed used when animating the visible lava height toward the target level.
+@export_range(0.5, 20.0, 0.1) var lava_height_lerp_speed: float = 6.0
+## Lift the lava surface slightly to avoid z-fighting on the lava line.
+@export var lava_surface_offset: float = 0.02
 ## Lowers the generated lava surface below its sampled depth level without changing terrain heights.
-@export_range(0.0, 0.5, 0.005) var water_surface_lowering: float = 0.03
+@export_range(0.0, 0.5, 0.005) var lava_surface_lowering: float = 0.03
 ## Extra world-space coverage added to each side of the generated surface.
-@export_range(0.0, 1.0, 0.05) var water_surface_margin_ratio: float = 0.2
+@export_range(0.0, 1.0, 0.05) var lava_surface_margin_ratio: float = 0.2
 ## Minimum extra world-space coverage added to each side of the generated surface.
-@export_range(0.0, 100.0, 0.5) var water_surface_min_margin_world: float = 0.0
+@export_range(0.0, 100.0, 0.5) var lava_surface_min_margin_world: float = 0.0
 ## Maximum subdivisions used for the generated lava surface plane.
-@export_range(8, 256) var water_surface_max_subdivisions: int = 96
+@export_range(8, 256) var lava_surface_max_subdivisions: int = 96
 ## Optional material override for the generated lava surface.
-@export var water_material: Material
+@export var lava_material: Material
 ## Base color and transparency for the fallback generated lava surface material.
-@export var water_color: Color = Color(0.08, 0.33, 0.46, 0.5)
+@export var lava_color: Color = Color(0.08, 0.33, 0.46, 0.5)
 ## Emission tint to keep the fallback material readable in darker areas.
-@export var water_emission_color: Color = Color(0.04, 0.18, 0.28, 1.0)
+@export var lava_emission_color: Color = Color(0.04, 0.18, 0.28, 1.0)
 
 @export_group("Internal Walls")
 ## Convert some interior floor cells into actual wall cells during map generation.
@@ -260,10 +271,10 @@ var _highground_positions: Array[Vector2] = []
 var _is_regenerating: bool = false
 var _heightmap_texture: ImageTexture
 var _heightmap_image: Image  # Store heightmap image for collision generation
-var _water_volume: MeshInstance3D
-var _displayed_water_height_level: float = 3.0
-var _target_water_height_level: float = 3.0
-var _default_water_surface_material: Material = preload("res://shaders/psOneLava.tres")
+var _lava_volume: MeshInstance3D
+var _displayed_lava_height_level: float = 3.0
+var _target_lava_height_level: float = 3.0
+var _default_lava_surface_material: Material = preload("res://shaders/psOneLava.tres")
 var _floating_deepest_point_nodes: Array[Node3D] = []
 var _floating_motion_time: float = 0.0
 var _terrain_shader_material: ShaderMaterial
@@ -277,6 +288,13 @@ var _last_exploration_player_grid_key: String = ""
 
 # Materials
 var _base_material: StandardMaterial3D
+var _last_ground_albedo: Color = Color(-1.0, -1.0, -1.0, -1.0)
+var _last_ground_emission: Color = Color(-1.0, -1.0, -1.0, -1.0)
+var _last_ground_emission_enabled: bool = false
+var _last_ground_emission_energy: float = -1.0
+var _last_ground_roughness: float = -1.0
+var _last_ground_metallic: float = -1.0
+var _last_ground_specular: float = -1.0
 
 # Generated values (set during map generation)
 var map_width: int = 100
@@ -287,12 +305,10 @@ var num_rooms: int = 12
 func _ready() -> void:
 	# Add to group for easy lookup
 	add_to_group("procedural_map")
-	_sync_water_height_state()
+	_sync_lava_height_state()
 	
 	_wall_scene = load("res://procedural_wall.tscn")
-	
-	# Load materials
-	_base_material = load("res://materials/wall.tres")
+	_base_material = solid_ground_material
 	
 	if regenerate_on_ready and not Engine.is_editor_hint():
 		_regenerate_map()
@@ -300,10 +316,11 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_floating_motion_time += delta
-	_update_rising_water(delta)
-	_update_water_height_animation(delta)
+	_update_rising_lava(delta)
+	_update_lava_height_animation(delta)
 	_update_floating_deepest_point_scenes()
 	_sync_terrain_footprint_shader_time()
+	_sync_ground_surface_material_parameters()
 	_update_exploration_tracking()
 
 
@@ -313,19 +330,76 @@ func _regenerate_map() -> void:
 		return
 	
 	_is_regenerating = true
-	_sync_water_height_state()
+	_sync_lava_height_state()
 	_clear_map()
 	_generate_map()
 	_spawn_geometry()
 	_spawn_deepest_point_scenes()
 	_place_player_on_floor()
 	_setup_exploration_tracking()
+	_finalize_regeneration()
+
+
+func generate_map_with_loading() -> void:
+	if _is_regenerating:
+		return
+
+	var stage_count: int = 10
+	_is_regenerating = true
+	_sync_lava_height_state()
+	_emit_generation_stage(1, stage_count, "Evicting Yesterday", "Sweeping out the last expedition before anyone trips over it.")
+	await get_tree().process_frame
+	_clear_map()
+
+	_emit_generation_stage(2, stage_count, "Consulting The Volcano", "Reading tremors, static, and several deeply suspicious omens.")
+	await get_tree().process_frame
+	_initialize_generation_state()
+
+	_emit_generation_stage(3, stage_count, "Sketching Escape Routes", "Dropping rooms where future panic will feel most cinematic.")
+	await get_tree().process_frame
+	_generate_rooms()
+
+	_emit_generation_stage(4, stage_count, "Stamping The Grid", "Turning wild crater dreams into tiles the boots can understand.")
+	await get_tree().process_frame
+	_generate_cells()
+
+	_emit_generation_stage(5, stage_count, "Teaching Rocks To Be Rude", "Marking walls in all the places your ankles would least appreciate.")
+	await get_tree().process_frame
+	_mark_walls()
+
+	_emit_generation_stage(6, stage_count, "Pouring In The Regret", "Letting lava settle into every low spot that looked remotely comfortable.")
+	await get_tree().process_frame
+	_mark_lava()
+
+	_emit_generation_stage(7, stage_count, "Extruding The Disaster", "Pulling cliffs, floors, and molten nonsense out of the ground.")
+	await get_tree().process_frame
+	_spawn_geometry()
+
+	_emit_generation_stage(8, stage_count, "Launching The Mascot", "Floating our roundest survivor into the danger zone.")
+	await get_tree().process_frame
+	_spawn_deepest_point_scenes()
+
+	_emit_generation_stage(9, stage_count, "Dropping You Somewhere Legal", "Finding a tile that counts as safe enough for paperwork.")
+	await get_tree().process_frame
+	_place_player_on_floor()
+
+	_emit_generation_stage(10, stage_count, "Teaching The Map To Gossip", "Preparing exploration tracking for every questionable decision ahead.")
+	await get_tree().process_frame
+	_setup_exploration_tracking()
+	_finalize_regeneration()
+
+
+func _emit_generation_stage(step_index: int, step_count: int, title: String, description: String) -> void:
+	generation_stage_changed.emit(step_index, step_count, title, description)
+
+
+func _finalize_regeneration() -> void:
 	_is_regenerating = false
-	
+
 	print("Map generated: ", _rooms.size(), " rooms, ", _cells.size(), " cells")
 	print("  - Floors: ", _floor_cells.size())
 	print("  - Lava: ", _lava_cells.size())
-	
+
 	# Emit signal for other systems (like pathfinding) to update
 	map_regenerated.emit()
 
@@ -346,7 +420,7 @@ func _clear_map() -> void:
 	_last_exploration_player_grid_key = ""
 	_floating_deepest_point_nodes.clear()
 	_floating_motion_time = 0.0
-	_water_volume = null
+	_lava_volume = null
 	_rooms.clear()
 	_cells.clear()
 	_lava_cells.clear()
@@ -355,6 +429,22 @@ func _clear_map() -> void:
 
 ## Main map generation algorithm (ported from TypeScript).
 func _generate_map() -> void:
+	_initialize_generation_state()
+
+	# Generate rooms
+	_generate_rooms()
+
+	# Generate cell grid
+	_generate_cells()
+
+	# Mark walls (cells adjacent to floors)
+	_mark_walls()
+
+	# Mark lava
+	_mark_lava()
+
+
+func _initialize_generation_state() -> void:
 	# Initialize RNG and noise
 	_rng = RandomNumberGenerator.new()
 	if randomize_seed:
@@ -379,18 +469,6 @@ func _generate_map() -> void:
 	num_rooms = maxi(num_rooms, 3)  # Ensure at least 3 rooms
 	
 	print("Generated map size: ", map_width, "x", map_height, " (area: ", map_area, ") with ", num_rooms, " rooms")
-	
-	# Generate rooms
-	_generate_rooms()
-	
-	# Generate cell grid
-	_generate_cells()
-	
-	# Mark walls (cells adjacent to floors)
-	_mark_walls()
-	
-	# Mark lava
-	_mark_lava()
 
 
 ## Generates rooms using algorithm from TypeScript.
@@ -595,7 +673,7 @@ func _spawn_geometry() -> void:
 	
 	# Spawn custom base mesh that follows map outline
 	_spawn_base_mesh()
-	_spawn_water_volume()
+	_spawn_lava_volume()
 	
 	for cell in _cells:
 		var world_pos := _cell_to_world(cell.position)
@@ -624,6 +702,7 @@ func _spawn_wall(pos: Vector3) -> void:
 		return
 	
 	var wall: Node3D = _wall_scene.instantiate()
+	wall.source_surface_material = _base_material
 	add_child(wall)
 	wall.add_to_group("wall")
 	wall.position = pos
@@ -864,10 +943,11 @@ func _spawn_base_mesh() -> void:
 	# Enable shadow casting and receiving
 	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	
-	# Step 3: Apply shader with displacement AND wall.tres material properties
+	# Step 3: Apply shader with displacement and solid ground material properties
 	var terrain_shader := _create_terrain_displacement_material()
 	_terrain_shader_material = terrain_shader
 	mesh_instance.material_override = terrain_shader
+	_sync_ground_surface_material_parameters(true)
 	_sync_terrain_footprint_shader_parameters()
 	
 	# Step 4: Create collision that follows the displayed terrain surface
@@ -1204,7 +1284,7 @@ func _get_deepest_point_spawn_position(source_cell: Cell, spawned_node: Node3D) 
 		spawn_position.y -= lowest_local_y
 		return spawn_position
 
-	spawn_position.y = _get_water_surface_world_height(_displayed_water_height_level) + deepest_point_scene_height_offset + deepest_point_water_float_offset - lowest_local_y
+	spawn_position.y = _get_lava_surface_world_height(_displayed_lava_height_level) + deepest_point_scene_height_offset + deepest_point_lava_float_offset - lowest_local_y
 	return spawn_position
 
 func _disable_collision_for_deepest_point_scene(root_node: Node) -> void:
@@ -1233,7 +1313,7 @@ func _disable_collision_in_subtree(current_node: Node) -> void:
 
 
 func _should_float_deepest_point_scene() -> bool:
-	return deepest_point_float_on_water and render_water and use_layered_depth
+	return deepest_point_float_on_lava and render_lava and use_layered_depth
 
 
 func _update_floating_deepest_point_scenes() -> void:
@@ -1243,7 +1323,7 @@ func _update_floating_deepest_point_scenes() -> void:
 	if not _should_float_deepest_point_scene():
 		return
 
-	var surface_y: float = _get_water_surface_world_height(_displayed_water_height_level) + deepest_point_scene_height_offset + deepest_point_water_float_offset
+	var surface_y: float = _get_lava_surface_world_height(_displayed_lava_height_level) + deepest_point_scene_height_offset + deepest_point_lava_float_offset
 	for spawned_node in _floating_deepest_point_nodes:
 		if not is_instance_valid(spawned_node):
 			continue
@@ -1347,177 +1427,185 @@ func _apply_material_override_to_meshes(node: Node, material: Material) -> void:
 
 
 ## Spawns a full-area lava surface plane that tracks the configured depth level.
-func _spawn_water_volume() -> void:
-	_remove_water_volume()
+func _spawn_lava_volume() -> void:
+	_remove_lava_volume()
 
-	if not render_water or not use_layered_depth:
+	if not render_lava or not use_layered_depth:
 		return
 
-	var surface_bounds: Dictionary = _get_water_surface_bounds()
+	var surface_bounds: Dictionary = _get_lava_surface_bounds()
 	if surface_bounds.is_empty():
-		push_warning("[Water] Could not determine generated map bounds for lava surface")
+		push_warning("[Lava] Could not determine generated map bounds for lava surface")
 		return
 
-	var clamped_water_level: float = clampf(_displayed_water_height_level, 0.0, 4.0)
-	var surface_y: float = _get_water_surface_world_height(clamped_water_level)
+	var clamped_lava_level: float = clampf(_displayed_lava_height_level, 0.0, 4.0)
+	var surface_y: float = _get_lava_surface_world_height(clamped_lava_level)
 	var surface_center: Vector3 = surface_bounds.get("center", Vector3.ZERO)
 	var surface_size: Vector2 = surface_bounds.get("size", Vector2.ZERO)
 	if surface_size.x <= 0.0 or surface_size.y <= 0.0:
-		push_warning("[Water] Lava surface bounds produced an invalid size")
+		push_warning("[Lava] Lava surface bounds produced an invalid size")
 		return
 
 	var plane_mesh: PlaneMesh = PlaneMesh.new()
 	plane_mesh.size = surface_size
-	var subdivisions_x: int = clampi(int(ceil(surface_size.x / maxf(cell_size, 0.001))), 8, water_surface_max_subdivisions)
-	var subdivisions_z: int = clampi(int(ceil(surface_size.y / maxf(cell_size, 0.001))), 8, water_surface_max_subdivisions)
+	var subdivisions_x: int = clampi(int(ceil(surface_size.x / maxf(cell_size, 0.001))), 8, lava_surface_max_subdivisions)
+	var subdivisions_z: int = clampi(int(ceil(surface_size.y / maxf(cell_size, 0.001))), 8, lava_surface_max_subdivisions)
 	plane_mesh.subdivide_width = subdivisions_x
 	plane_mesh.subdivide_depth = subdivisions_z
 
-	var water_instance: MeshInstance3D = MeshInstance3D.new()
-	water_instance.mesh = plane_mesh
-	water_instance.material_override = _create_water_material()
-	water_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	water_instance.extra_cull_margin = 1000.0
-	water_instance.add_to_group("water_volume")
-	water_instance.add_to_group("lava_surface")
-	water_instance.position = Vector3(surface_center.x, surface_y, surface_center.z)
-	_water_volume = water_instance
+	var lava_instance: MeshInstance3D = MeshInstance3D.new()
+	lava_instance.mesh = plane_mesh
+	lava_instance.material_override = _create_lava_material()
+	lava_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	lava_instance.extra_cull_margin = 1000.0
+	lava_instance.add_to_group("lava_volume")
+	lava_instance.add_to_group("lava_surface")
+	lava_instance.position = Vector3(surface_center.x, surface_y, surface_center.z)
+	_lava_volume = lava_instance
 
-	add_child(water_instance)
-	_spawned_objects.append(water_instance)
+	add_child(lava_instance)
+	_spawned_objects.append(lava_instance)
 
-	print("[Water] Spawned lava surface plane at level ", clamped_water_level, " with size ", surface_size)
+	print("[Lava] Spawned lava surface plane at level ", clamped_lava_level, " with size ", surface_size)
 
 
 ## Creates the material used by the generated lava surface.
-func _create_water_material() -> Material:
-	if water_material != null:
-		return water_material
+func _create_lava_material() -> Material:
+	if lava_material != null:
+		return lava_material
 
-	if _default_water_surface_material != null:
-		return _default_water_surface_material
+	if _default_lava_surface_material != null:
+		return _default_lava_surface_material
 
 	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = water_color
+	material.albedo_color = lava_color
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material.roughness = 0.08
 	material.metallic = 0.02
 	material.emission_enabled = true
-	material.emission = water_emission_color
+	material.emission = lava_emission_color
 	material.emission_energy_multiplier = 0.35
 	material.refraction_enabled = true
 	material.refraction_scale = 0.02
 	return material
 
 
-## Raises the water surface by one configured step.
-func raise_water_height() -> float:
-	return set_water_height_level(water_height_level - water_height_step_levels)
+## Raises the lava surface by one configured step.
+func raise_lava_height() -> float:
+	return set_lava_height_level(lava_height_level - lava_height_step_levels)
 
 
-## Lowers the water surface by one configured step.
-func lower_water_height() -> float:
-	return set_water_height_level(water_height_level + water_height_step_levels)
+## Lowers the lava surface by one configured step.
+func lower_lava_height() -> float:
+	return set_lava_height_level(lava_height_level + lava_height_step_levels)
 
 
-## Sets the water surface height in depth levels and refreshes the water mesh.
-func set_water_height_level(new_level: float) -> float:
+## Sets the lava surface height in depth levels and refreshes the lava mesh.
+func set_lava_height_level(new_level: float) -> float:
 	var clamped_level: float = clampf(new_level, 0.0, 4.0)
-	if is_equal_approx(clamped_level, _target_water_height_level):
-		return _target_water_height_level
+	if is_equal_approx(clamped_level, _target_lava_height_level):
+		return _target_lava_height_level
 
-	water_height_level = clamped_level
-	_target_water_height_level = clamped_level
+	lava_height_level = clamped_level
+	_target_lava_height_level = clamped_level
 	if _cells.is_empty():
-		_displayed_water_height_level = clamped_level
-	return _target_water_height_level
+		_displayed_lava_height_level = clamped_level
+	return _target_lava_height_level
 
 
-## Returns the current water height in depth levels.
-func get_water_height_level() -> float:
-	return _displayed_water_height_level
+## Returns the current lava height in depth levels.
+func get_lava_height_level() -> float:
+	return _displayed_lava_height_level
 
 
-## Returns the current target water height in depth levels.
-func get_target_water_height_level() -> float:
-	return _target_water_height_level
+## Returns the current target lava height in depth levels.
+func get_target_lava_height_level() -> float:
+	return _target_lava_height_level
 
 
-## Removes and rebuilds only the water mesh for runtime height updates.
-func _refresh_water_volume() -> void:
+## Returns the visible lava height as a normalized world-height percentage.
+func get_lava_height_normalized() -> float:
+	return clampf(1.0 - (_displayed_lava_height_level / 4.0), 0.0, 1.0)
+
+
+## Removes and rebuilds only the lava mesh for runtime height updates.
+func _refresh_lava_volume() -> void:
 	if _cells.is_empty():
 		return
 
-	if _water_volume == null or not is_instance_valid(_water_volume):
-		_spawn_water_volume()
+	if _lava_volume == null or not is_instance_valid(_lava_volume):
+		_spawn_lava_volume()
 		return
 
-	_water_volume.position.y = _get_water_surface_world_height(_displayed_water_height_level)
+	_lava_volume.position.y = _get_lava_surface_world_height(_displayed_lava_height_level)
 
 
-## Synchronizes the water target and displayed level from the exported value.
-func _sync_water_height_state() -> void:
-	var clamped_level: float = clampf(water_height_level, 0.0, 4.0)
-	water_height_level = clamped_level
-	_target_water_height_level = clamped_level
-	_displayed_water_height_level = clamped_level
+## Synchronizes the lava target and displayed level from the exported value.
+func _sync_lava_height_state() -> void:
+	var clamped_level: float = clampf(lava_height_level, 0.0, 4.0)
+	lava_height_level = clamped_level
+	_target_lava_height_level = clamped_level
+	_displayed_lava_height_level = clamped_level
 
 
-## Gradually raises the water toward depth 0 and optionally loops back for debugging.
-func _update_rising_water(delta: float) -> void:
-	if water_rise_speed_levels_per_second <= 0.0:
+## Gradually raises the lava toward depth 0 and optionally loops back for debugging.
+func _update_rising_lava(delta: float) -> void:
+	if not lava_auto_rise_enabled:
 		return
 
-	if _target_water_height_level <= 0.0:
-		if debug_loop_rising_water:
-			water_height_level = 4.0
-			_target_water_height_level = 4.0
-			_displayed_water_height_level = 4.0
-			_refresh_water_volume()
+	if lava_rise_speed_levels_per_second <= 0.0:
 		return
 
-	var next_target_level: float = maxf(0.0, _target_water_height_level - (water_rise_speed_levels_per_second * delta))
-	if is_equal_approx(next_target_level, _target_water_height_level):
+	if _target_lava_height_level <= 0.0:
+		if debug_loop_rising_lava:
+			lava_height_level = 4.0
+			_target_lava_height_level = 4.0
+			_displayed_lava_height_level = 4.0
+			_refresh_lava_volume()
 		return
 
-	water_height_level = next_target_level
-	_target_water_height_level = next_target_level
-
-
-## Animates the visible water level toward the target and refreshes the water mesh.
-func _update_water_height_animation(delta: float) -> void:
-	if _cells.is_empty() or not render_water or not use_layered_depth:
+	var next_target_level: float = maxf(0.0, _target_lava_height_level - (lava_rise_speed_levels_per_second * delta))
+	if is_equal_approx(next_target_level, _target_lava_height_level):
 		return
 
-	if is_equal_approx(_displayed_water_height_level, _target_water_height_level):
+	lava_height_level = next_target_level
+	_target_lava_height_level = next_target_level
+
+
+## Animates the visible lava level toward the target and refreshes the lava mesh.
+func _update_lava_height_animation(delta: float) -> void:
+	if _cells.is_empty() or not render_lava or not use_layered_depth:
 		return
 
-	var lerp_weight: float = minf(1.0, water_height_lerp_speed * delta)
-	var next_water_level: float = lerpf(_displayed_water_height_level, _target_water_height_level, lerp_weight)
-	if absf(next_water_level - _target_water_height_level) <= 0.01:
-		next_water_level = _target_water_height_level
-
-	if is_equal_approx(next_water_level, _displayed_water_height_level):
+	if is_equal_approx(_displayed_lava_height_level, _target_lava_height_level):
 		return
 
-	_displayed_water_height_level = next_water_level
-	_refresh_water_volume()
+	var lerp_weight: float = minf(1.0, lava_height_lerp_speed * delta)
+	var next_lava_level: float = lerpf(_displayed_lava_height_level, _target_lava_height_level, lerp_weight)
+	if absf(next_lava_level - _target_lava_height_level) <= 0.01:
+		next_lava_level = _target_lava_height_level
 
-
-## Removes the current water volume if one is present.
-func _remove_water_volume() -> void:
-	if _water_volume == null:
+	if is_equal_approx(next_lava_level, _displayed_lava_height_level):
 		return
 
-	if _spawned_objects.has(_water_volume):
-		_spawned_objects.erase(_water_volume)
+	_displayed_lava_height_level = next_lava_level
+	_refresh_lava_volume()
 
-	if is_instance_valid(_water_volume):
-		_water_volume.queue_free()
 
-	_water_volume = null
+## Removes the current lava volume if one is present.
+func _remove_lava_volume() -> void:
+	if _lava_volume == null:
+		return
+
+	if _spawned_objects.has(_lava_volume):
+		_spawned_objects.erase(_lava_volume)
+
+	if is_instance_valid(_lava_volume):
+		_lava_volume.queue_free()
+
+	_lava_volume = null
 
 
 ## Converts a discrete depth level into the world-space terrain height.
@@ -1526,12 +1614,12 @@ func _get_depth_world_height(depth: int) -> float:
 
 
 ## Returns the world-space height used by the generated lava surface plane.
-func _get_water_surface_world_height(depth_level: float) -> float:
-	return _get_depth_level_world_height(depth_level) + water_surface_offset - water_surface_lowering
+func _get_lava_surface_world_height(depth_level: float) -> float:
+	return _get_depth_level_world_height(depth_level) + lava_surface_offset - lava_surface_lowering
 
 
 ## Returns the generated map bounds expanded with an extra surface margin on every side.
-func _get_water_surface_bounds() -> Dictionary:
+func _get_lava_surface_bounds() -> Dictionary:
 	if _cells.is_empty():
 		return {}
 
@@ -1556,8 +1644,8 @@ func _get_water_surface_bounds() -> Dictionary:
 
 	var base_width: float = max_x - min_x
 	var base_depth: float = max_z - min_z
-	var margin_x: float = maxf(base_width * water_surface_margin_ratio, water_surface_min_margin_world)
-	var margin_z: float = maxf(base_depth * water_surface_margin_ratio, water_surface_min_margin_world)
+	var margin_x: float = maxf(base_width * lava_surface_margin_ratio, lava_surface_min_margin_world)
+	var margin_z: float = maxf(base_depth * lava_surface_margin_ratio, lava_surface_min_margin_world)
 	var expanded_width: float = base_width + (margin_x * 2.0)
 	var expanded_depth: float = base_depth + (margin_z * 2.0)
 	var center: Vector3 = Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
@@ -1923,7 +2011,7 @@ func _create_terrain_mesh() -> MeshInstance3D:
 	return mesh_instance
 
 
-## Creates terrain shader with displacement and wall.tres material
+## Creates terrain shader with displacement and the shared solid ground material.
 func _create_terrain_displacement_material() -> ShaderMaterial:
 	var shader_material := ShaderMaterial.new()
 	var shader := Shader.new()
@@ -1936,23 +2024,6 @@ func _create_terrain_displacement_material() -> ShaderMaterial:
 	
 	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
 	
-	# Get wall.tres material properties
-	var wall_albedo: Color = Color(0.46, 0.18, 0.0, 1.0)
-	var wall_emission: Color = Color(0.68, 0.0, 0.08, 1.0)
-	var wall_emission_energy: float = 0.27
-	var wall_roughness: float = 0.0
-	var wall_metallic: float = 0.0
-	var wall_metallic_specular: float = 0.0
-	
-	if _base_material:
-		wall_albedo = _base_material.albedo_color
-		if _base_material.emission_enabled:
-			wall_emission = _base_material.emission
-			wall_emission_energy = _base_material.emission_energy_multiplier
-		wall_roughness = _base_material.roughness
-		wall_metallic = _base_material.metallic
-		wall_metallic_specular = _base_material.metallic_specular
-
 	# Complete shader with displacement AND material
 	shader.code = """
 shader_type spatial;
@@ -2070,7 +2141,7 @@ void fragment() {
 	float final_footprint_mask = clamp(footprint_mask * slope_mask, 0.0, 1.0);
 	vec3 footprint_tint = vec3(1.0 - footprint_strength * final_footprint_mask);
 
-	// Apply wall.tres material properties
+	// Apply shared surface material properties
 	ALBEDO = albedo_color.rgb * depth_tint * footprint_tint;
 	EMISSION = emission_color.rgb * emission_energy * depth_tint * footprint_tint;
 	ROUGHNESS = roughness_value;
@@ -2083,25 +2154,111 @@ void fragment() {
 	shader_material.set_shader_parameter("heightmap", _heightmap_texture)
 	shader_material.set_shader_parameter("amplitude", depth_step_height * 4.0 * heightmap_displacement_amplitude)
 	shader_material.set_shader_parameter("plane_size", terrain_world_rect.size)
-	shader_material.set_shader_parameter("albedo_color", wall_albedo)
-	shader_material.set_shader_parameter("emission_color", wall_emission)
-	shader_material.set_shader_parameter("emission_energy", wall_emission_energy)
-	shader_material.set_shader_parameter("roughness_value", wall_roughness)
-	shader_material.set_shader_parameter("metallic_value", wall_metallic)
-	shader_material.set_shader_parameter("specular_value", wall_metallic_specular)
+	_apply_ground_surface_parameters_to_terrain_shader(shader_material)
 	shader_material.set_shader_parameter("footprint_lifetime", terrain_footprint_lifetime)
 	shader_material.set_shader_parameter("footprint_strength", terrain_footprint_strength)
 	
-	print("[Terrain Shader] Material properties from wall.tres:")
-	print("  Albedo: ", wall_albedo)
-	print("  Emission: ", wall_emission, " * ", wall_emission_energy)
-	print("  Roughness: ", wall_roughness, " Metallic: ", wall_metallic, " Specular: ", wall_metallic_specular)
+	print("[Terrain Shader] Material properties from solid_ground_material:")
+	if _base_material != null:
+		print("  Albedo: ", _base_material.albedo_color)
+		if _base_material.emission_enabled:
+			print("  Emission: ", _base_material.emission, " * ", _base_material.emission_energy_multiplier)
+		else:
+			print("  Emission: disabled")
+		print("  Roughness: ", _base_material.roughness, " Metallic: ", _base_material.metallic, " Specular: ", _base_material.metallic_specular)
 	print("[Terrain Shader] Heightmap texture valid: ", _heightmap_texture != null)
 	if _heightmap_texture:
 		print("[Terrain Shader] Heightmap size: ", _heightmap_texture.get_width(), "x", _heightmap_texture.get_height())
 	print("[Terrain Shader] Displacement amplitude: ", depth_step_height * 4.0 * heightmap_displacement_amplitude)
 	
 	return shader_material
+
+
+func _apply_ground_surface_parameters_to_terrain_shader(shader_material: ShaderMaterial) -> void:
+	if shader_material == null:
+		return
+
+	var ground_albedo: Color = Color(0.46, 0.18, 0.0, 1.0)
+	var ground_emission: Color = Color(0.0, 0.0, 0.0, 1.0)
+	var ground_emission_energy: float = 0.0
+	var ground_roughness: float = 0.0
+	var ground_metallic: float = 0.0
+	var ground_specular: float = 0.0
+
+	if _base_material != null:
+		ground_albedo = _base_material.albedo_color
+		if _base_material.emission_enabled:
+			ground_emission = _base_material.emission
+			ground_emission_energy = _base_material.emission_energy_multiplier
+		ground_roughness = _base_material.roughness
+		ground_metallic = _base_material.metallic
+		ground_specular = _base_material.metallic_specular
+
+	shader_material.set_shader_parameter("albedo_color", ground_albedo)
+	shader_material.set_shader_parameter("emission_color", ground_emission)
+	shader_material.set_shader_parameter("emission_energy", ground_emission_energy)
+	shader_material.set_shader_parameter("roughness_value", ground_roughness)
+	shader_material.set_shader_parameter("metallic_value", ground_metallic)
+	shader_material.set_shader_parameter("specular_value", ground_specular)
+
+
+func _sync_ground_surface_material_parameters(force_sync: bool = false) -> void:
+	var ground_albedo: Color = Color(0.46, 0.18, 0.0, 1.0)
+	var ground_emission: Color = Color(0.0, 0.0, 0.0, 1.0)
+	var ground_emission_energy: float = 0.0
+	var ground_roughness: float = 0.0
+	var ground_metallic: float = 0.0
+	var ground_specular: float = 0.0
+	var emission_enabled: bool = false
+
+	if _base_material != null:
+		ground_albedo = _base_material.albedo_color
+		emission_enabled = _base_material.emission_enabled
+		if emission_enabled:
+			ground_emission = _base_material.emission
+			ground_emission_energy = _base_material.emission_energy_multiplier
+		ground_roughness = _base_material.roughness
+		ground_metallic = _base_material.metallic
+		ground_specular = _base_material.metallic_specular
+
+	if not force_sync \
+	and _last_ground_albedo == ground_albedo \
+	and _last_ground_emission == ground_emission \
+	and _last_ground_emission_enabled == emission_enabled \
+	and is_equal_approx(_last_ground_emission_energy, ground_emission_energy) \
+	and is_equal_approx(_last_ground_roughness, ground_roughness) \
+	and is_equal_approx(_last_ground_metallic, ground_metallic) \
+	and is_equal_approx(_last_ground_specular, ground_specular):
+		return
+
+	if _terrain_shader_material != null:
+		_apply_ground_surface_parameters_to_terrain_shader(_terrain_shader_material)
+
+	_sync_spawned_wall_surface_materials()
+	_sync_spawned_base_platform_materials()
+
+	_last_ground_albedo = ground_albedo
+	_last_ground_emission = ground_emission
+	_last_ground_emission_enabled = emission_enabled
+	_last_ground_emission_energy = ground_emission_energy
+	_last_ground_roughness = ground_roughness
+	_last_ground_metallic = ground_metallic
+	_last_ground_specular = ground_specular
+
+
+func _sync_spawned_wall_surface_materials() -> void:
+	for wall_node in get_tree().get_nodes_in_group("wall"):
+		wall_node.source_surface_material = _base_material
+		if wall_node.has_method("sync_surface_material"):
+			wall_node.call("sync_surface_material")
+
+
+func _sync_spawned_base_platform_materials() -> void:
+	for base_node in get_tree().get_nodes_in_group("base_platform"):
+		for child_node in base_node.get_children():
+			var mesh_instance: MeshInstance3D = child_node as MeshInstance3D
+			if mesh_instance != null:
+				mesh_instance.material_override = _base_material
 
 
 func register_terrain_footprint(world_position: Vector3, move_direction: Vector3, major_radius: float = -1.0, minor_radius: float = -1.0) -> void:
