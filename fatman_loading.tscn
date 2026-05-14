@@ -1,0 +1,13 @@
+[gd_scene format=3 uid="uid://bxfqjc5w73131"]
+
+[ext_resource type="PackedScene" uid="uid://dp4dtin18drb7" path="res://blender/fatman.fbx" id="1_v7org"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ere8e"]
+diffuse_mode = 3
+specular_mode = 1
+albedo_color = Color(0.7922699, 0.48701483, 0.046673246, 1)
+
+[node name="fatman" unique_id=273550357 instance=ExtResource("1_v7org")]
+
+[node name="Body" parent="." index="0" unique_id=1444024954]
+surface_material_override/0 = SubResource("StandardMaterial3D_ere8e")

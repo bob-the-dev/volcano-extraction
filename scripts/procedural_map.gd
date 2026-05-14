@@ -11,6 +11,9 @@ signal generation_stage_changed(step_index: int, step_count: int, title: String,
 const DEFAULT_TERRAIN_PERIMETER_CELLS: int = 2
 const OUTER_TERRAIN_PERIMETER_DEPTH: int = 0
 const HEIGHTMAP_DETAIL_NOISE_WORLD_SCALE: float = 4.0
+const GENERATION_YIELD_ROW_INTERVAL: int = 4
+const GENERATION_YIELD_CELL_INTERVAL: int = 192
+const GENERATION_YIELD_GEOMETRY_INTERVAL: int = 24
 
 # Inner classes
 class Room:
@@ -131,6 +134,8 @@ class TerrainFootprint:
 @export_range(0, 20) var blur_radius: int = 5
 ## Grid mesh subdivisions (vertices per cell, higher = smoother terrain)
 @export_range(1, 128) var mesh_subdivisions: int = 48
+## Collision heightmap subdivisions per terrain cell. Lower values keep generation much cheaper than the visual mesh.
+@export_range(1, 12) var collision_subdivisions: int = 4
 ## Heightmap displacement multiplier (higher = more dramatic height differences)
 @export_range(0.1, 10.0) var heightmap_displacement_amplitude: float = 5.0
 ## Signed per-pixel heightmap noise added before blur. Negative values invert the extra detail.
@@ -266,6 +271,10 @@ var _rooms: Array[Room] = []
 var _cells: Array[Cell] = []
 var _lava_cells: Array[Cell] = []
 var _floor_cells: Array[Cell] = []
+var _room_floor_lookup: Dictionary = {}
+var _cell_lookup: Dictionary = {}
+var _floor_lookup: Dictionary = {}
+var _wall_lookup: Dictionary = {}
 var _lava_sources: Array[Vector2] = []
 var _highground_positions: Array[Vector2] = []
 var _is_regenerating: bool = false
@@ -282,6 +291,8 @@ var _terrain_footprints: Array[TerrainFootprint] = []
 var _retiring_terrain_footprints: Array[TerrainFootprint] = []
 var _terrain_grid_rect: Rect2i = Rect2i(0, 0, 0, 0)
 var _terrain_world_rect: Rect2 = Rect2(Vector2.ZERO, Vector2.ZERO)
+var _terrain_collision_sample_width: int = 0
+var _terrain_collision_sample_depth: int = 0
 var _explored_cells: Dictionary = {}
 var _exploration_player: Node3D = null
 var _last_exploration_player_grid_key: String = ""
@@ -361,19 +372,19 @@ func generate_map_with_loading() -> void:
 
 	_emit_generation_stage(4, stage_count, "Stamping The Grid", "Turning wild crater dreams into tiles the boots can understand.")
 	await get_tree().process_frame
-	_generate_cells()
+	await _generate_cells_async()
 
 	_emit_generation_stage(5, stage_count, "Teaching Rocks To Be Rude", "Marking walls in all the places your ankles would least appreciate.")
 	await get_tree().process_frame
-	_mark_walls()
+	await _mark_walls_async()
 
 	_emit_generation_stage(6, stage_count, "Pouring In The Regret", "Letting lava settle into every low spot that looked remotely comfortable.")
 	await get_tree().process_frame
-	_mark_lava()
+	await _mark_lava_async()
 
 	_emit_generation_stage(7, stage_count, "Extruding The Disaster", "Pulling cliffs, floors, and molten nonsense out of the ground.")
 	await get_tree().process_frame
-	_spawn_geometry()
+	await _spawn_geometry_async()
 
 	_emit_generation_stage(8, stage_count, "Launching The Mascot", "Floating our roundest survivor into the danger zone.")
 	await get_tree().process_frame
@@ -425,6 +436,12 @@ func _clear_map() -> void:
 	_cells.clear()
 	_lava_cells.clear()
 	_floor_cells.clear()
+	_room_floor_lookup.clear()
+	_cell_lookup.clear()
+	_floor_lookup.clear()
+	_wall_lookup.clear()
+	_terrain_collision_sample_width = 0
+	_terrain_collision_sample_depth = 0
 
 
 ## Main map generation algorithm (ported from TypeScript).
@@ -532,6 +549,7 @@ func _generate_rooms() -> void:
 func _generate_cells() -> void:
 	var w := int(floor(map_width / cell_size)) - (edge_margin * 2)
 	var h := int(floor(map_height / cell_size)) - (edge_margin * 2)
+	_rebuild_room_floor_lookup()
 	
 	for j in range(h):
 		for i in range(w):
@@ -543,7 +561,7 @@ func _generate_cells() -> void:
 			var n := _get_noise(world_pos.x, world_pos.z)
 			
 			# Check if in any room (pass world position for proper comparison)
-			var room_info := _check_floor_world(world_pos)
+			var room_info: Dictionary = _get_room_floor_info_at_grid(pos)
 			
 			var cell := Cell.new()
 			cell.position = pos
@@ -555,6 +573,38 @@ func _generate_cells() -> void:
 			cell.noise_value = n
 			
 			_cells.append(cell)
+
+	_rebuild_cell_lookup()
+	_rebuild_surface_lookups()
+
+
+func _generate_cells_async() -> void:
+	var w: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
+	var h: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
+	await _rebuild_room_floor_lookup_async()
+
+	for j in range(h):
+		for i in range(w):
+			var pos: Vector2 = Vector2(i, j)
+			var world_pos: Vector3 = _cell_to_world(pos)
+			var n: float = _get_noise(world_pos.x, world_pos.z)
+			var room_info: Dictionary = _get_room_floor_info_at_grid(pos)
+
+			var cell: Cell = Cell.new()
+			cell.position = pos
+			cell.filled = false
+			cell.is_floor = room_info.is_floor
+			cell.is_wall = false
+			cell.is_lava = false
+			cell.type = room_info.type
+			cell.noise_value = n
+			_cells.append(cell)
+
+		if (j + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+			await get_tree().process_frame
+
+	_rebuild_cell_lookup()
+	_rebuild_surface_lookups()
 
 
 ## Marks cells as walls if adjacent to floors.
@@ -570,12 +620,12 @@ func _mark_walls() -> void:
 			print("[Internal Walls] Skipped. enabled=", scatter_internal_walls, " noise=", _noise != null)
 		return
 
-	var protected_positions: Array[Vector2] = []
+	var protected_positions: Dictionary = {}
 	for room in _rooms:
 		var room_center_pos: Vector2 = _world_to_grid(room.position)
 		var room_center_cell: Cell = _get_cell_at(room_center_pos)
 		if room_center_cell != null and room_center_cell.is_floor:
-			protected_positions.append(room_center_pos)
+			protected_positions[_to_grid_lookup_key(room_center_pos)] = true
 
 	var candidate_count: int = 0
 	var protected_count: int = 0
@@ -591,7 +641,7 @@ func _mark_walls() -> void:
 
 		candidate_count += 1
 
-		if protected_positions.has(cell.position):
+		if protected_positions.has(_to_grid_lookup_key(cell.position)):
 			protected_count += 1
 			continue
 
@@ -626,6 +676,90 @@ func _mark_walls() -> void:
 			" noise_range=", Vector2(min_noise_sample, max_noise_sample)
 		)
 
+	_rebuild_surface_lookups()
+
+
+func _mark_walls_async() -> void:
+	var processed_cell_count: int = 0
+	for cell in _cells:
+		if cell.is_floor:
+			cell.is_wall = false
+		else:
+			cell.is_wall = _has_neighbours(cell, "is_floor", 2.5)
+
+		processed_cell_count += 1
+		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+			await get_tree().process_frame
+
+	if not scatter_internal_walls or _noise == null:
+		if debug_internal_walls:
+			print("[Internal Walls] Skipped. enabled=", scatter_internal_walls, " noise=", _noise != null)
+		_rebuild_surface_lookups()
+		return
+
+	var protected_positions: Dictionary = {}
+	for room in _rooms:
+		var room_center_pos: Vector2 = _world_to_grid(room.position)
+		var room_center_cell: Cell = _get_cell_at(room_center_pos)
+		if room_center_cell != null and room_center_cell.is_floor:
+			protected_positions[_to_grid_lookup_key(room_center_pos)] = true
+
+	var candidate_count: int = 0
+	var protected_count: int = 0
+	var sparse_count: int = 0
+	var below_threshold_count: int = 0
+	var converted_count: int = 0
+	var min_noise_sample: float = INF
+	var max_noise_sample: float = -INF
+
+	processed_cell_count = 0
+	for cell in _cells:
+		if not cell.is_floor:
+			continue
+
+		candidate_count += 1
+
+		if protected_positions.has(_to_grid_lookup_key(cell.position)):
+			protected_count += 1
+			continue
+
+		if _count_floor_neighbors(cell.position) < internal_wall_min_floor_neighbors:
+			sparse_count += 1
+			continue
+
+		var noise_sample: float = _get_internal_wall_noise(cell.position)
+		min_noise_sample = minf(min_noise_sample, noise_sample)
+		max_noise_sample = maxf(max_noise_sample, noise_sample)
+		if noise_sample < internal_wall_noise_threshold:
+			below_threshold_count += 1
+			continue
+
+		cell.is_floor = false
+		cell.is_wall = true
+		converted_count += 1
+
+		processed_cell_count += 1
+		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+			await get_tree().process_frame
+
+	if min_noise_sample == INF:
+		min_noise_sample = 0.0
+	if max_noise_sample == -INF:
+		max_noise_sample = 0.0
+
+	if debug_internal_walls:
+		print(
+			"[Internal Walls] candidates=", candidate_count,
+			" protected=", protected_count,
+			" sparse=", sparse_count,
+			" below_threshold=", below_threshold_count,
+			" converted=", converted_count,
+			" threshold=", internal_wall_noise_threshold,
+			" noise_range=", Vector2(min_noise_sample, max_noise_sample)
+		)
+
+	_rebuild_surface_lookups()
+
 
 ## Marks cells as lava based on noise and proximity.
 func _mark_lava() -> void:
@@ -636,6 +770,20 @@ func _mark_lava() -> void:
 			cell.is_lava = near_wall or noise_check
 		
 		cell.filled = cell.is_lava or cell.is_floor or cell.is_wall
+
+
+func _mark_lava_async() -> void:
+	var processed_cell_count: int = 0
+	for cell in _cells:
+		if cell.is_floor:
+			var near_wall: bool = _has_neighbours(cell, "is_wall", 2.0 + cell.noise_value)
+			var noise_check: bool = cell.noise_value < 0.33 or cell.noise_value > 0.66
+			cell.is_lava = near_wall or noise_check
+
+		cell.filled = cell.is_lava or cell.is_floor or cell.is_wall
+		processed_cell_count += 1
+		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+			await get_tree().process_frame
 
 
 ## Spawns visual geometry for cells.
@@ -688,10 +836,70 @@ func _spawn_geometry() -> void:
 		elif cell.is_lava:
 			_spawn_depth_label(world_pos, cell.depth)
 			_lava_cells.append(cell)
-			_lava_cells.append(cell)
 			# TODO: Spawn lava visual when available
 	
 	# Draw debug grid if enabled
+	if show_grid_debug:
+		_draw_debug_grid()
+
+
+func _spawn_geometry_async() -> void:
+	_select_depth_sources()
+
+	print("[Map] Calculating terrain depths...")
+	var processed_cell_count: int = 0
+	for cell in _cells:
+		if cell.is_wall:
+			cell.depth = 0
+		else:
+			var distance: float = _distance_to_nearest_wall(cell.position)
+			cell.depth = _calculate_tile_depth(cell.position, distance, cell.noise_value)
+
+		processed_cell_count += 1
+		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+			await get_tree().process_frame
+
+	for lava_pos in _lava_sources:
+		var lava_cell: Cell = _get_cell_at(lava_pos)
+		if lava_cell:
+			lava_cell.depth = 4
+			print("[Map] Lava source at grid ", lava_pos, " set to depth 4")
+		else:
+			push_warning("[Map] Failed to find cell for lava source at grid ", lava_pos)
+
+	for high_pos in _highground_positions:
+		var high_cell: Cell = _get_cell_at(high_pos)
+		if high_cell:
+			high_cell.depth = 0
+			print("[Map] Highground at grid ", high_pos, " set to depth 0")
+		else:
+			push_warning("[Map] Failed to find cell for highground at grid ", high_pos)
+
+	await _spawn_base_mesh_async()
+	_spawn_lava_volume()
+	await get_tree().process_frame
+
+	var geometry_work_units: int = 0
+	for cell in _cells:
+		var world_pos: Vector3 = _cell_to_world(cell.position)
+
+		if cell.is_wall:
+			_spawn_wall(world_pos)
+			_spawn_depth_label(world_pos, cell.depth)
+			geometry_work_units += 4
+		elif cell.is_floor and not cell.is_lava:
+			_floor_cells.append(cell)
+			_spawn_depth_label(world_pos, cell.depth)
+			geometry_work_units += 1
+		elif cell.is_lava:
+			_spawn_depth_label(world_pos, cell.depth)
+			_lava_cells.append(cell)
+			geometry_work_units += 1
+
+		if geometry_work_units >= GENERATION_YIELD_GEOMETRY_INTERVAL:
+			geometry_work_units = 0
+			await get_tree().process_frame
+
 	if show_grid_debug:
 		_draw_debug_grid()
 
@@ -703,8 +911,6 @@ func _spawn_wall(pos: Vector3) -> void:
 	
 	var wall: Node3D = _wall_scene.instantiate()
 	wall.source_surface_material = _base_material
-	add_child(wall)
-	wall.add_to_group("wall")
 	wall.position = pos
 	
 	# Randomize wall parameters
@@ -731,9 +937,9 @@ func _spawn_wall(pos: Vector3) -> void:
 	wall.corner_ne_top_inset = _rng.randf_range(-0.3, 0.3)
 	wall.corner_sw_top_inset = _rng.randf_range(-0.3, 0.3)
 	wall.corner_se_top_inset = _rng.randf_range(-0.3, 0.3)
-	
-	if wall.has_method("_regenerate"):
-		wall.call("_regenerate")
+
+	add_child(wall)
+	wall.add_to_group("wall")
 	
 	_spawned_objects.append(wall)
 
@@ -798,15 +1004,16 @@ func _select_depth_sources() -> void:
 
 ## Gets a cell at specific grid position
 func _get_cell_at(grid_pos: Vector2) -> Cell:
-	for cell in _cells:
-		if cell.position == grid_pos:
-			return cell
+	var lookup_key: Vector2i = _to_grid_lookup_key(grid_pos)
+	if _cell_lookup.has(lookup_key):
+		return _cell_lookup[lookup_key] as Cell
 	return null
 
 
 ## Calculates the distance from a cell to the nearest wall
 func _distance_to_nearest_wall(cell_pos: Vector2) -> float:
 	var min_distance := INF
+	var cell_grid_pos: Vector2i = _to_grid_lookup_key(cell_pos)
 	
 	# Check cells in expanding radius
 	for radius in range(1, 30):
@@ -815,11 +1022,9 @@ func _distance_to_nearest_wall(cell_pos: Vector2) -> float:
 				if abs(dx) != radius and abs(dy) != radius:
 					continue
 				
-				var check_pos := Vector2(cell_pos.x + dx, cell_pos.y + dy)
-				var check_cell := _get_cell_at(check_pos)
-				
-				if check_cell and check_cell.is_wall:
-					var distance := cell_pos.distance_to(check_pos)
+				var check_pos: Vector2i = cell_grid_pos + Vector2i(dx, dy)
+				if _wall_lookup.has(check_pos):
+					var distance: float = cell_pos.distance_to(Vector2(check_pos.x, check_pos.y))
 					if distance < min_distance:
 						min_distance = distance
 		
@@ -936,26 +1141,42 @@ func _spawn_base_mesh() -> void:
 	if not _heightmap_texture:
 		print("[Heightmap Terrain] ERROR: Failed to generate heightmap texture")
 		return
-	
-	# Step 2: Create flat subdivided plane mesh
-	var mesh_instance := _create_terrain_mesh()
-	
-	# Enable shadow casting and receiving
+	_create_and_add_terrain_mesh()
+
+
+func _spawn_base_mesh_async() -> void:
+	if not use_layered_depth:
+		_spawn_base_mesh_flat()
+		return
+
+	var base_cells: Array[Cell] = _build_terrain_base_cells()
+	if base_cells.is_empty():
+		return
+
+	print("[Heightmap Terrain] Generating heightmap texture...")
+	_heightmap_texture = await _generate_heightmap_texture_async(base_cells)
+	if not _heightmap_texture:
+		print("[Heightmap Terrain] ERROR: Failed to generate heightmap texture")
+		return
+
+	_create_and_add_terrain_mesh()
+
+
+func _create_and_add_terrain_mesh() -> void:
+	var mesh_instance: MeshInstance3D = _create_terrain_mesh()
 	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	
-	# Step 3: Apply shader with displacement and solid ground material properties
-	var terrain_shader := _create_terrain_displacement_material()
+
+	var terrain_shader: ShaderMaterial = _create_terrain_displacement_material()
 	_terrain_shader_material = terrain_shader
 	mesh_instance.material_override = terrain_shader
 	_sync_ground_surface_material_parameters(true)
 	_sync_terrain_footprint_shader_parameters()
-	
-	# Step 4: Create collision that follows the displayed terrain surface
+
 	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
 	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
-	
-	var static_body := StaticBody3D.new()
-	var collision_shape := CollisionShape3D.new()
+
+	var static_body: StaticBody3D = StaticBody3D.new()
+	var collision_shape: CollisionShape3D = CollisionShape3D.new()
 	var terrain_collision_shape: Shape3D = _create_terrain_collision_shape(
 		terrain_world_rect.size.x,
 		terrain_world_rect.size.y,
@@ -964,27 +1185,39 @@ func _spawn_base_mesh() -> void:
 	)
 	if terrain_collision_shape:
 		collision_shape.shape = terrain_collision_shape
+		if _terrain_collision_sample_width > 1 and _terrain_collision_sample_depth > 1:
+			collision_shape.scale = _get_terrain_collision_shape_scale(terrain_world_rect.size.x, terrain_world_rect.size.y)
 	else:
 		var max_displacement: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
-		var box_shape := BoxShape3D.new()
+		var box_shape: BoxShape3D = BoxShape3D.new()
 		box_shape.size = Vector3(terrain_world_rect.size.x, 0.2, terrain_world_rect.size.y)
 		collision_shape.shape = box_shape
 		collision_shape.position = Vector3(0, max_displacement, 0)
 		push_warning("[Heightmap Terrain] Falling back to flat collision because terrain collision generation failed")
-	
+
 	static_body.add_child(collision_shape)
 	static_body.position = mesh_instance.position
 	static_body.add_to_group("base_platform")
-	
+
 	add_child(static_body)
 	add_child(mesh_instance)
 	_spawned_objects.append(static_body)
 	_spawned_objects.append(mesh_instance)
-	
+
 	print("[Heightmap Terrain] Terrain collision anchored to mesh base Y: ", mesh_instance.position.y)
 	print("[Heightmap Terrain] Terrain mesh with terrain-following collision added to scene")
-	
 	print("[Heightmap Terrain] Created terrain mesh with heightmap texture")
+
+
+func _get_terrain_collision_shape_scale(playable_width: float, playable_height: float) -> Vector3:
+	if _terrain_collision_sample_width <= 1 or _terrain_collision_sample_depth <= 1:
+		return Vector3.ONE
+
+	return Vector3(
+		playable_width / float(_terrain_collision_sample_width - 1),
+		1.0,
+		playable_height / float(_terrain_collision_sample_depth - 1)
+	)
 
 func _get_terrain_grid_rect() -> Rect2i:
 	return _terrain_grid_rect
@@ -1725,80 +1958,41 @@ func _get_max_terrain_displacement() -> float:
 
 
 ## Creates a collision-only trimesh that matches the displayed terrain surface.
-func _create_terrain_collision_shape(playable_width: float, playable_height: float, grid_width: int, grid_height: int) -> Shape3D:
+func _create_terrain_collision_shape(_playable_width: float, _playable_height: float, grid_width: int, grid_height: int) -> Shape3D:
 	if _heightmap_image == null:
 		push_error("[Heightmap Terrain] Missing heightmap image for terrain collision generation")
 		return null
 
-	var width_segments: int = grid_width * mesh_subdivisions
-	var depth_segments: int = grid_height * mesh_subdivisions
-	if width_segments <= 0 or depth_segments <= 0:
+	var sample_width: int = max(grid_width * collision_subdivisions + 1, 2)
+	var sample_depth: int = max(grid_height * collision_subdivisions + 1, 2)
+	if sample_width <= 1 or sample_depth <= 1:
 		push_error("[Heightmap Terrain] Invalid terrain subdivision values for collision generation")
 		return null
 
 	var displacement_amplitude: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
-	var vertices: Array[PackedVector3Array] = []
-	vertices.resize(width_segments + 1)
+	var collision_image: Image = _build_collision_heightmap_image(_heightmap_image, sample_width, sample_depth)
+	var shape: HeightMapShape3D = HeightMapShape3D.new()
+	shape.update_map_data_from_image(collision_image, 0.0, displacement_amplitude)
+	_terrain_collision_sample_width = sample_width
+	_terrain_collision_sample_depth = sample_depth
 
-	for x_index in range(width_segments + 1):
-		var column: PackedVector3Array = PackedVector3Array()
-		column.resize(depth_segments + 1)
-		var x_ratio: float = float(x_index) / float(width_segments)
-		var local_x: float = lerpf(-playable_width * 0.5, playable_width * 0.5, x_ratio)
-
-		for z_index in range(depth_segments + 1):
-			var z_ratio: float = float(z_index) / float(depth_segments)
-			var local_z: float = lerpf(-playable_height * 0.5, playable_height * 0.5, z_ratio)
-			var uv: Vector2 = Vector2(
-				(local_x / playable_width) + 0.5,
-				(local_z / playable_height) + 0.5
-			)
-			var height_value: float = _sample_heightmap_bilinear(_heightmap_image, uv)
-			column[z_index] = Vector3(local_x, height_value * displacement_amplitude, local_z)
-
-		vertices[x_index] = column
-
-	var faces: PackedVector3Array = PackedVector3Array()
-	faces.resize(width_segments * depth_segments * 6)
-	var face_index: int = 0
-
-	for x_index in range(width_segments):
-		for z_index in range(depth_segments):
-			var top_left: Vector3 = vertices[x_index][z_index]
-			var top_right: Vector3 = vertices[x_index + 1][z_index]
-			var bottom_left: Vector3 = vertices[x_index][z_index + 1]
-			var bottom_right: Vector3 = vertices[x_index + 1][z_index + 1]
-
-			faces[face_index] = top_left
-			face_index += 1
-			faces[face_index] = bottom_left
-			face_index += 1
-			faces[face_index] = top_right
-			face_index += 1
-
-			faces[face_index] = top_right
-			face_index += 1
-			faces[face_index] = bottom_left
-			face_index += 1
-			faces[face_index] = bottom_right
-			face_index += 1
-
-	var arrays: Array = []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = faces
-
-	var array_mesh: ArrayMesh = ArrayMesh.new()
-	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-
-	var shape: ConcavePolygonShape3D = array_mesh.create_trimesh_shape()
-	if shape == null:
-		push_error("[Heightmap Terrain] Failed to convert generated terrain mesh into a collision shape")
-		return null
-
-	shape.backface_collision = true
-
-	print("[Heightmap Terrain] Generated terrain collision with ", width_segments, "x", depth_segments, " quads")
+	print("[Heightmap Terrain] Generated terrain collision with ", sample_width, "x", sample_depth, " samples")
 	return shape
+
+
+func _build_collision_heightmap_image(source_image: Image, sample_width: int, sample_depth: int) -> Image:
+	var collision_image: Image = Image.create(sample_width, sample_depth, false, Image.FORMAT_RF)
+	for z_index in range(sample_depth):
+		var z_uv: float = 0.0
+		if sample_depth > 1:
+			z_uv = float(z_index) / float(sample_depth - 1)
+		for x_index in range(sample_width):
+			var x_uv: float = 0.0
+			if sample_width > 1:
+				x_uv = float(x_index) / float(sample_width - 1)
+			var sample_height: float = _sample_heightmap_bilinear(source_image, Vector2(x_uv, z_uv))
+			collision_image.set_pixel(x_index, z_index, Color(sample_height, 0.0, 0.0, 1.0))
+	return collision_image
 
 
 ## Samples the heightmap image using bilinear filtering to match rendered terrain.
@@ -1906,6 +2100,62 @@ func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	return texture
 
 
+func _generate_heightmap_texture_async(cells: Array[Cell]) -> ImageTexture:
+	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
+	var grid_width: int = terrain_grid_rect.size.x
+	var grid_height: int = terrain_grid_rect.size.y
+	var tex_width: int = grid_width * pixels_per_cell
+	var tex_height: int = grid_height * pixels_per_cell
+
+	print("[Heightmap] Creating ", tex_width, "x", tex_height, " texture (", grid_width, "x", grid_height, " cells)")
+
+	var image: Image = Image.create(tex_width, tex_height, false, Image.FORMAT_RF)
+	image.fill(Color(0, 0, 0, 1))
+
+	var processed_cell_count: int = 0
+	for cell in cells:
+		var grid_x: int = int(cell.position.x) - terrain_grid_rect.position.x
+		var grid_y: int = int(cell.position.y) - terrain_grid_rect.position.y
+		var px_start_x: int = grid_x * pixels_per_cell
+		var px_start_y: int = grid_y * pixels_per_cell
+		var depth_normalized: float = 1.0 - (float(cell.depth) / 4.0)
+		var pixel_color: Color = Color(depth_normalized, 0, 0, 1)
+
+		for py in range(pixels_per_cell):
+			for px in range(pixels_per_cell):
+				var img_x: int = px_start_x + px
+				var img_y: int = px_start_y + py
+				if img_x < tex_width and img_y < tex_height:
+					image.set_pixel(img_x, img_y, pixel_color)
+
+		processed_cell_count += 1
+		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+			await get_tree().process_frame
+
+	if not is_zero_approx(heightmap_noise_displacement_strength):
+		image = await _apply_heightmap_detail_noise_async(image, terrain_grid_rect)
+
+	if blur_radius > 0:
+		print("[Heightmap] Applying Gaussian blur with radius ", blur_radius)
+		image = await _apply_gaussian_blur_async(image, blur_radius)
+
+	if export_heightmap_debug:
+		var save_path: String = "res://debug_heightmap.png"
+		image.save_png(save_path)
+		print("[Heightmap] Saved debug texture to ", save_path)
+
+	var depth_counts: Array[int] = [0, 0, 0, 0, 0]
+	for cell in cells:
+		if cell.depth >= 0 and cell.depth <= 4:
+			depth_counts[cell.depth] += 1
+	print("[Heightmap] Depth distribution: D0=", depth_counts[0], " D1=", depth_counts[1], " D2=", depth_counts[2], " D3=", depth_counts[3], " D4=", depth_counts[4])
+
+	_heightmap_image = image
+	var texture: ImageTexture = ImageTexture.create_from_image(image)
+	print("[Heightmap] Texture generated successfully")
+	return texture
+
+
 func _apply_heightmap_detail_noise(source_image: Image, terrain_grid_rect: Rect2i) -> Image:
 	var width: int = source_image.get_width()
 	var height: int = source_image.get_height()
@@ -1923,6 +2173,30 @@ func _apply_heightmap_detail_noise(source_image: Image, terrain_grid_rect: Rect2
 			var current_height: float = source_image.get_pixel(x, y).r
 			var displaced_height: float = clampf(current_height + detail_noise, 0.0, 1.0)
 			result_image.set_pixel(x, y, Color(displaced_height, 0, 0, 1))
+
+	return result_image
+
+
+func _apply_heightmap_detail_noise_async(source_image: Image, terrain_grid_rect: Rect2i) -> Image:
+	var width: int = source_image.get_width()
+	var height: int = source_image.get_height()
+	if width <= 0 or height <= 0:
+		return source_image
+
+	var result_image: Image = source_image.duplicate()
+	for y in range(height):
+		for x in range(width):
+			var grid_x: float = float(x) / float(pixels_per_cell)
+			var grid_y: float = float(y) / float(pixels_per_cell)
+			var world_x: float = (float(terrain_grid_rect.position.x) + grid_x + 0.5) * cell_size + (edge_margin * cell_size)
+			var world_z: float = (float(terrain_grid_rect.position.y) + grid_y + 0.5) * cell_size + (edge_margin * cell_size)
+			var detail_noise: float = _get_heightmap_detail_noise(world_x, world_z)
+			var current_height: float = source_image.get_pixel(x, y).r
+			var displaced_height: float = clampf(current_height + detail_noise, 0.0, 1.0)
+			result_image.set_pixel(x, y, Color(displaced_height, 0, 0, 1))
+
+		if (y + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+			await get_tree().process_frame
 
 	return result_image
 
@@ -1970,6 +2244,51 @@ func _apply_gaussian_blur(source_image: Image, radius: int) -> Image:
 				sum += pixel.r * kernel[i + radius]
 			result_image.set_pixel(x, y, Color(sum, 0, 0, 1))
 	
+	return result_image
+
+
+func _apply_gaussian_blur_async(source_image: Image, radius: int) -> Image:
+	var width: int = source_image.get_width()
+	var height: int = source_image.get_height()
+	var temp_image: Image = Image.create(width, height, false, source_image.get_format())
+
+	var kernel: Array[float] = []
+	var kernel_sum: float = 0.0
+	var sigma: float = radius / 2.0
+
+	for i in range(-radius, radius + 1):
+		var value: float = exp(-(i * i) / (2.0 * sigma * sigma))
+		kernel.append(value)
+		kernel_sum += value
+
+	for i in range(kernel.size()):
+		kernel[i] /= kernel_sum
+
+	for y in range(height):
+		for x in range(width):
+			var sum: float = 0.0
+			for i in range(-radius, radius + 1):
+				var sample_x: int = clampi(x + i, 0, width - 1)
+				var pixel: Color = source_image.get_pixel(sample_x, y)
+				sum += pixel.r * kernel[i + radius]
+			temp_image.set_pixel(x, y, Color(sum, 0, 0, 1))
+
+		if (y + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+			await get_tree().process_frame
+
+	var result_image: Image = Image.create(width, height, false, source_image.get_format())
+	for y in range(height):
+		for x in range(width):
+			var sum: float = 0.0
+			for i in range(-radius, radius + 1):
+				var sample_y: int = clampi(y + i, 0, height - 1)
+				var pixel: Color = temp_image.get_pixel(x, sample_y)
+				sum += pixel.r * kernel[i + radius]
+			result_image.set_pixel(x, y, Color(sum, 0, 0, 1))
+
+		if (y + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+			await get_tree().process_frame
+
 	return result_image
 
 
@@ -2557,26 +2876,141 @@ func _check_floor_world(world_pos: Vector3) -> Dictionary:
 	var pos_2d := Vector2(world_pos.x, world_pos.z)
 	
 	for room in _rooms:
-		var dist := pos_2d.distance_to(room.position)
-		var distortion := 80.0
-		
-		var noise_x := _map_values(pos_2d.x, 0, map_width, 0, distortion)
-		var noise_y := _map_values(pos_2d.y, 0, map_height, 0, distortion)
-		var noise_val := _get_noise(noise_x, noise_y)
-		var rad_noise := _map_values(noise_val, 0, 1, -0.1, 0.2)
-		
-		if dist <= room.radius * 1.25 + rad_noise * room.radius:
+		if _is_world_position_inside_room(pos_2d, room):
 			return {"is_floor": true, "type": room.type}
 	
 	return {"is_floor": false, "type": "base"}
 
 
+func _rebuild_room_floor_lookup() -> void:
+	_room_floor_lookup.clear()
+	for room in _rooms:
+		_cache_room_floor_cells(room)
+
+
+func _rebuild_room_floor_lookup_async() -> void:
+	_room_floor_lookup.clear()
+	for room in _rooms:
+		await _cache_room_floor_cells_async(room)
+
+
+func _cache_room_floor_cells(room: Room) -> void:
+	var grid_bounds: Rect2i = _get_room_grid_bounds(room)
+	for y in range(grid_bounds.position.y, grid_bounds.end.y):
+		for x in range(grid_bounds.position.x, grid_bounds.end.x):
+			var lookup_key: Vector2i = Vector2i(x, y)
+			if _room_floor_lookup.has(lookup_key):
+				continue
+
+			var cell_center: Vector3 = _cell_to_world(Vector2(x, y))
+			if _is_world_position_inside_room(Vector2(cell_center.x, cell_center.z), room):
+				_room_floor_lookup[lookup_key] = room.type
+
+
+func _cache_room_floor_cells_async(room: Room) -> void:
+	var grid_bounds: Rect2i = _get_room_grid_bounds(room)
+	for y in range(grid_bounds.position.y, grid_bounds.end.y):
+		for x in range(grid_bounds.position.x, grid_bounds.end.x):
+			var lookup_key: Vector2i = Vector2i(x, y)
+			if _room_floor_lookup.has(lookup_key):
+				continue
+
+			var cell_center: Vector3 = _cell_to_world(Vector2(x, y))
+			if _is_world_position_inside_room(Vector2(cell_center.x, cell_center.z), room):
+				_room_floor_lookup[lookup_key] = room.type
+
+		if ((y - grid_bounds.position.y) + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+			await get_tree().process_frame
+
+
+func _get_room_grid_bounds(room: Room) -> Rect2i:
+	var max_grid_x: int = max(int(floor(map_width / cell_size)) - (edge_margin * 2) - 1, 0)
+	var max_grid_y: int = max(int(floor(map_height / cell_size)) - (edge_margin * 2) - 1, 0)
+	var max_room_reach: float = room.radius * 1.45
+	var room_center_grid: Vector2 = _world_to_grid(room.position)
+	var grid_radius: int = int(ceili(max_room_reach / cell_size)) + 1
+	var min_grid_x: int = maxi(int(room_center_grid.x) - grid_radius, 0)
+	var min_grid_y: int = maxi(int(room_center_grid.y) - grid_radius, 0)
+	var bound_width: int = mini(int(room_center_grid.x) + grid_radius, max_grid_x) - min_grid_x + 1
+	var bound_height: int = mini(int(room_center_grid.y) + grid_radius, max_grid_y) - min_grid_y + 1
+	return Rect2i(min_grid_x, min_grid_y, bound_width, bound_height)
+
+
+func _get_room_floor_info_at_grid(grid_pos: Vector2) -> Dictionary:
+	var lookup_key: Vector2i = _to_grid_lookup_key(grid_pos)
+	if _room_floor_lookup.has(lookup_key):
+		return {"is_floor": true, "type": _room_floor_lookup[lookup_key]}
+	return {"is_floor": false, "type": "base"}
+
+
+func _is_world_position_inside_room(world_pos: Vector2, room: Room) -> bool:
+	var distance_to_room: float = world_pos.distance_to(room.position)
+	var distortion: float = 80.0
+	var noise_x: float = _map_values(world_pos.x, 0, map_width, 0, distortion)
+	var noise_y: float = _map_values(world_pos.y, 0, map_height, 0, distortion)
+	var noise_value: float = _get_noise(noise_x, noise_y)
+	var radius_noise: float = _map_values(noise_value, 0, 1, -0.1, 0.2)
+	return distance_to_room <= room.radius * 1.25 + radius_noise * room.radius
+
+
 ## Helper: Check if cell has neighbours matching a condition.
 func _has_neighbours(cell: Cell, property: String, max_distance: float) -> bool:
-	for other in _cells:
-		if other.get(property) and cell.position.distance_to(other.position) <= max_distance:
-			return true
+	var lookup: Dictionary = _get_lookup_for_property(property)
+	if lookup.is_empty():
+		for other in _cells:
+			if other.get(property) and cell.position.distance_to(other.position) <= max_distance:
+				return true
+		return false
+
+	return _has_lookup_neighbor_within_distance(cell.position, lookup, max_distance)
+
+
+func _rebuild_cell_lookup() -> void:
+	_cell_lookup.clear()
+	for cell in _cells:
+		_cell_lookup[_to_grid_lookup_key(cell.position)] = cell
+
+
+func _rebuild_surface_lookups() -> void:
+	_floor_lookup.clear()
+	_wall_lookup.clear()
+	for cell in _cells:
+		var lookup_key: Vector2i = _to_grid_lookup_key(cell.position)
+		if cell.is_floor:
+			_floor_lookup[lookup_key] = true
+		if cell.is_wall:
+			_wall_lookup[lookup_key] = true
+
+
+func _get_lookup_for_property(property: String) -> Dictionary:
+	if property == "is_floor":
+		return _floor_lookup
+	if property == "is_wall":
+		return _wall_lookup
+	return {}
+
+
+func _has_lookup_neighbor_within_distance(grid_pos: Vector2, lookup: Dictionary, max_distance: float) -> bool:
+	var origin: Vector2i = _to_grid_lookup_key(grid_pos)
+	var search_radius: int = int(ceili(max_distance))
+	var max_distance_squared: float = max_distance * max_distance
+	for x_offset in range(-search_radius, search_radius + 1):
+		for y_offset in range(-search_radius, search_radius + 1):
+			if x_offset == 0 and y_offset == 0:
+				continue
+
+			var distance_squared: float = float((x_offset * x_offset) + (y_offset * y_offset))
+			if distance_squared > max_distance_squared:
+				continue
+
+			var neighbor_key: Vector2i = origin + Vector2i(x_offset, y_offset)
+			if lookup.has(neighbor_key):
+				return true
 	return false
+
+
+func _to_grid_lookup_key(grid_pos: Vector2) -> Vector2i:
+	return Vector2i(int(grid_pos.x), int(grid_pos.y))
 
 
 func _build_cell_position_lookup(cells: Array[Cell]) -> Dictionary:
@@ -2596,15 +3030,15 @@ func _has_position_lookup_neighbor(position_lookup: Dictionary, grid_pos: Vector
 ## Counts neighboring floor cells in the 8-cell neighborhood around a grid position.
 func _count_floor_neighbors(grid_pos: Vector2) -> int:
 	var count: int = 0
+	var origin: Vector2i = _to_grid_lookup_key(grid_pos)
 
 	for x_offset in range(-1, 2):
 		for y_offset in range(-1, 2):
 			if x_offset == 0 and y_offset == 0:
 				continue
 
-			var neighbor_pos: Vector2 = Vector2(grid_pos.x + x_offset, grid_pos.y + y_offset)
-			var neighbor_cell: Cell = _get_cell_at(neighbor_pos)
-			if neighbor_cell != null and neighbor_cell.is_floor:
+			var neighbor_pos: Vector2i = origin + Vector2i(x_offset, y_offset)
+			if _floor_lookup.has(neighbor_pos):
 				count += 1
 
 	return count
