@@ -2144,7 +2144,6 @@ _data = {
 }
 
 [node name="Player" type="CharacterBody3D" unique_id=2083504003]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.041917637, 0)
 floor_constant_speed = true
 floor_max_angle = 0.30543262
 floor_snap_length = 0.0
@@ -2228,21 +2227,28 @@ bone_idx = 4
 
 [node name="SpotLight3D" type="SpotLight3D" parent="character-human/Skeleton3D/LeftArmLightAttachment" unique_id=845300304]
 transform = Transform3D(-0.3321612, 0.94322264, 8.857697e-08, 0.94232494, 0.33184502, -0.04361939, -0.04114282, -0.014488583, -0.99904823, 0.11, 0, 0.12305072)
-light_energy = 6.0
-light_indirect_energy = 0.1
-light_volumetric_fog_energy = 0.0
+light_color = Color(0, 1.4133459, 1.3673114, 1)
+light_energy = 8.108
+light_indirect_energy = 5.024
+light_volumetric_fog_energy = 1.62
+light_size = 1.0
+light_bake_mode = 0
 shadow_enabled = true
-spot_range = 10.0
-spot_angle = 38.0
-spot_angle_attenuation = 0.8
+shadow_bias = 4.88
+shadow_normal_bias = 3.335
+distance_fade_enabled = true
+spot_range = 2.739
+spot_attenuation = 0.8
+spot_angle = 32.61
+spot_angle_attenuation = 2.985706
 
 [node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=1198963158]
 libraries/ = SubResource("AnimationLibrary_3sg01")
 
 [node name="SpringArmPivot" type="Node3D" parent="." unique_id=86174034]
-transform = Transform3D(1, 0, 0, 0, 0.087155804, 0.9961947, 0, -0.9961947, 0.087155804, 0, 0, 0)
+transform = Transform3D(1, 0, 0, 0, 0.08715581, 0.99619484, 0, -0.99619484, 0.08715581, 0, 0, 0)
 script = ExtResource("3_7d0qx")
-anchor_offset = Vector3(0, 15, 0)
+anchor_offset = Vector3(0, 12, 0)
 orbit_ease_speed = 10.0
 
 [node name="SpringArm3D" type="SpringArm3D" parent="SpringArmPivot" unique_id=1819220982]
@@ -2253,8 +2259,12 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.24, 0, 0)
 
 [node name="Camera3D" type="Camera3D" parent="SpringArmPivot" unique_id=1473785525]
 transform = Transform3D(1, 0, 0, 0, 0.5735765, -0.8191521, 0, 0.8191521, 0.5735765, 0, 0, 0)
-v_offset = -12.0
+v_offset = -9.285
 current = true
-fov = 65.0
+far = 35.0
 script = ExtResource("4_c2t1o")
-spring_arm = NodePath("../SpringArm3D/SpringPosition")
+perimeter_fog_far_margin = 8.0
+perimeter_fog_height = 15.0
+perimeter_fog_density = 0.48
+perimeter_fog_height_anchor_blend = 0.34
+perimeter_fog_color = Color(0, 0, 0, 1)

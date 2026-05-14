@@ -130,6 +130,10 @@ class TerrainFootprint:
 ## Use layered depth rendering for base mesh
 @export var use_layered_depth: bool = true
 
+@export_group("Exploration")
+## Number of cells around the player that become permanently revealed on the minimap.
+@export_range(0, 6, 1) var exploration_reveal_radius_cells: int = 2
+
 @export_group("Footprints")
 ## Enable simple fading footprints on the terrain shader.
 @export var enable_terrain_footprints: bool = true
@@ -203,6 +207,8 @@ class TerrainFootprint:
 @export_range(0.0, 0.5, 0.005) var water_surface_lowering: float = 0.03
 ## Extra world-space coverage added to each side of the generated surface.
 @export_range(0.0, 1.0, 0.05) var water_surface_margin_ratio: float = 0.2
+## Minimum extra world-space coverage added to each side of the generated surface.
+@export_range(0.0, 100.0, 0.5) var water_surface_min_margin_world: float = 0.0
 ## Maximum subdivisions used for the generated lava surface plane.
 @export_range(8, 256) var water_surface_max_subdivisions: int = 96
 ## Optional material override for the generated lava surface.
@@ -258,6 +264,9 @@ var _terrain_footprints: Array[TerrainFootprint] = []
 var _retiring_terrain_footprints: Array[TerrainFootprint] = []
 var _terrain_grid_rect: Rect2i = Rect2i(0, 0, 0, 0)
 var _terrain_world_rect: Rect2 = Rect2(Vector2.ZERO, Vector2.ZERO)
+var _explored_cells: Dictionary = {}
+var _exploration_player: Node3D = null
+var _last_exploration_player_grid_key: String = ""
 
 # Materials
 var _base_material: StandardMaterial3D
@@ -287,6 +296,7 @@ func _process(delta: float) -> void:
 	_update_water_height_animation(delta)
 	_update_floating_deepest_point_scenes()
 	_sync_terrain_footprint_shader_time()
+	_update_exploration_tracking()
 
 
 ## Regenerates the entire map.
@@ -301,6 +311,7 @@ func _regenerate_map() -> void:
 	_spawn_geometry()
 	_spawn_deepest_point_scenes()
 	_place_player_on_floor()
+	_setup_exploration_tracking()
 	_is_regenerating = false
 	
 	print("Map generated: ", _rooms.size(), " rooms, ", _cells.size(), " cells")
@@ -322,6 +333,9 @@ func _clear_map() -> void:
 	_retiring_terrain_footprints.clear()
 	_terrain_grid_rect = Rect2i(0, 0, 0, 0)
 	_terrain_world_rect = Rect2(Vector2.ZERO, Vector2.ZERO)
+	_explored_cells.clear()
+	_exploration_player = null
+	_last_exploration_player_grid_key = ""
 	_floating_deepest_point_nodes.clear()
 	_floating_motion_time = 0.0
 	_water_volume = null
@@ -1513,8 +1527,8 @@ func _get_water_surface_bounds() -> Dictionary:
 
 	var base_width: float = max_x - min_x
 	var base_depth: float = max_z - min_z
-	var margin_x: float = base_width * water_surface_margin_ratio
-	var margin_z: float = base_depth * water_surface_margin_ratio
+	var margin_x: float = maxf(base_width * water_surface_margin_ratio, water_surface_min_margin_world)
+	var margin_z: float = maxf(base_depth * water_surface_margin_ratio, water_surface_min_margin_world)
 	var expanded_width: float = base_width + (margin_x * 2.0)
 	var expanded_depth: float = base_depth + (margin_z * 2.0)
 	var center: Vector3 = Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
@@ -1523,6 +1537,61 @@ func _get_water_surface_bounds() -> Dictionary:
 		"center": center,
 		"size": Vector2(expanded_width, expanded_depth)
 	}
+
+
+func _setup_exploration_tracking() -> void:
+	_explored_cells.clear()
+	_last_exploration_player_grid_key = ""
+	_exploration_player = null
+
+	if _cells.is_empty():
+		return
+
+	_exploration_player = NodeUtils.find(self, "player", ["../Player"])
+	if _exploration_player == null:
+		push_warning("[Exploration] Player not found. Explored areas will not update.")
+		return
+
+	_update_exploration_tracking(true)
+
+
+func _update_exploration_tracking(force_reveal: bool = false) -> void:
+	if _cells.is_empty():
+		return
+
+	if _exploration_player == null or not is_instance_valid(_exploration_player):
+		_exploration_player = NodeUtils.find(self, "player", ["../Player"])
+		if _exploration_player == null:
+			return
+
+	var player_grid: Vector2 = _world_to_grid(Vector2(_exploration_player.global_position.x, _exploration_player.global_position.z))
+	var player_grid_pos: Vector2i = Vector2i(int(player_grid.x), int(player_grid.y))
+	var player_grid_key: String = _grid_position_key(player_grid_pos)
+	if not force_reveal and player_grid_key == _last_exploration_player_grid_key:
+		return
+
+	_last_exploration_player_grid_key = player_grid_key
+	_reveal_exploration_cells(player_grid_pos)
+
+
+func _reveal_exploration_cells(center_grid_pos: Vector2i) -> void:
+	for x_offset in range(-exploration_reveal_radius_cells, exploration_reveal_radius_cells + 1):
+		for y_offset in range(-exploration_reveal_radius_cells, exploration_reveal_radius_cells + 1):
+			var offset: Vector2 = Vector2(float(x_offset), float(y_offset))
+			if offset.length() > float(exploration_reveal_radius_cells) + 0.35:
+				continue
+
+			var grid_pos: Vector2i = Vector2i(center_grid_pos.x + x_offset, center_grid_pos.y + y_offset)
+			_reveal_exploration_cell(grid_pos)
+
+
+func _reveal_exploration_cell(grid_pos: Vector2i) -> void:
+	var cell: Cell = _get_cell_at(Vector2(float(grid_pos.x), float(grid_pos.y)))
+	if cell == null or not cell.filled:
+		return
+
+	var grid_key: String = _grid_position_key(grid_pos)
+	_explored_cells[grid_key] = true
 
 
 ## Converts a continuous depth level into the world-space terrain height.
@@ -2160,6 +2229,8 @@ func _place_player_on_floor() -> void:
 	if not player:
 		push_warning("Player node not found!")
 		return
+
+	var player_ground_offset: float = _get_player_ground_offset(player)
 	
 	# Try to place on highground first
 	var spawn_pos: Vector3
@@ -2173,16 +2244,68 @@ func _place_player_on_floor() -> void:
 			spawn_pos = _get_cell_surface_position(fallback_cell)
 		else:
 			spawn_pos = _get_cell_surface_position(highground_cell)
-		spawn_pos.y += 1.0
+		spawn_pos.y += player_ground_offset
 		print("[Player Spawn] Placed on highground at: ", spawn_pos)
 	else:
 		# Fallback to random floor tile if no highground
 		var random_cell: Cell = _floor_cells[_rng.randi_range(0, _floor_cells.size() - 1)]
 		spawn_pos = _get_cell_surface_position(random_cell)
-		spawn_pos.y += 1.0
+		spawn_pos.y += player_ground_offset
 		print("[Player Spawn] Placed at random floor: ", spawn_pos)
 	
-	player.position = spawn_pos
+	player.global_position = spawn_pos
+
+	var player_body: CharacterBody3D = player as CharacterBody3D
+	if player_body != null:
+		player_body.velocity = Vector3.ZERO
+
+
+func _get_player_ground_offset(player: Node3D) -> float:
+	var lowest_local_y: float = INF
+
+	for child: Node in player.get_children():
+		var collision_shape: CollisionShape3D = child as CollisionShape3D
+		if collision_shape == null or collision_shape.shape == null:
+			continue
+
+		var shape_lowest_y: float = _get_collision_shape_lowest_local_y(collision_shape)
+		lowest_local_y = minf(lowest_local_y, shape_lowest_y)
+
+	if lowest_local_y == INF:
+		return 0.05
+
+	return maxf(-lowest_local_y + 0.02, 0.02)
+
+
+func _get_collision_shape_lowest_local_y(collision_shape: CollisionShape3D) -> float:
+	var shape: Shape3D = collision_shape.shape
+	var transform_origin_y: float = collision_shape.transform.origin.y
+
+	if shape is ConvexPolygonShape3D:
+		var convex_shape: ConvexPolygonShape3D = shape as ConvexPolygonShape3D
+		var lowest_y: float = INF
+		for point: Vector3 in convex_shape.points:
+			lowest_y = minf(lowest_y, point.y + transform_origin_y)
+		if lowest_y != INF:
+			return lowest_y
+
+	if shape is CapsuleShape3D:
+		var capsule_shape: CapsuleShape3D = shape as CapsuleShape3D
+		return transform_origin_y - capsule_shape.radius - (capsule_shape.height * 0.5)
+
+	if shape is SphereShape3D:
+		var sphere_shape: SphereShape3D = shape as SphereShape3D
+		return transform_origin_y - sphere_shape.radius
+
+	if shape is CylinderShape3D:
+		var cylinder_shape: CylinderShape3D = shape as CylinderShape3D
+		return transform_origin_y - (cylinder_shape.height * 0.5)
+
+	if shape is BoxShape3D:
+		var box_shape: BoxShape3D = shape as BoxShape3D
+		return transform_origin_y - (box_shape.size.y * 0.5)
+
+	return transform_origin_y
 
 
 ## Returns the sampled terrain surface position at the center of a cell.
@@ -2306,6 +2429,16 @@ func _constrain(value: float, min_val: float, max_val: float) -> float:
 ## Public getter for cells array (used by minimap).
 func get_cells() -> Array:
 	return _cells
+
+
+## Public getter for explored cells (used by minimap).
+func get_explored_cells() -> Dictionary:
+	return _explored_cells
+
+
+## Returns whether a specific grid cell has been permanently explored.
+func is_cell_explored(grid_pos: Vector2i) -> bool:
+	return _explored_cells.has(_grid_position_key(grid_pos))
 
 
 ## Public getter for lava source positions (used by minimap).

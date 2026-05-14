@@ -14,18 +14,12 @@ ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
 sky_material = SubResource("ProceduralSkyMaterial_as1t3")
 
 [sub_resource type="Environment" id="Environment_c5lsl"]
-background_mode = 2
+background_mode = 1
 sky = SubResource("Sky_744mi")
 tonemap_mode = 2
-glow_enabled = true
 volumetric_fog_enabled = true
-volumetric_fog_density = 0.0717
-volumetric_fog_albedo = Color(0.3779188, 0.37791887, 0.37791884, 1)
-volumetric_fog_emission = Color(0.17641911, 0.17641908, 0.17641908, 1)
-volumetric_fog_anisotropy = 0.58
-volumetric_fog_sky_affect = 0.786
+volumetric_fog_albedo = Color(0.14044744, 0.14044744, 0.14044744, 1)
 adjustment_enabled = true
-adjustment_contrast = 1.12
 
 [node name="Main" type="Node3D" unique_id=1074138897]
 
@@ -33,9 +27,13 @@ adjustment_contrast = 1.12
 environment = SubResource("Environment_c5lsl")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=886841073]
-transform = Transform3D(-0.29570797, -0.554733, 0.777707, 0, 0.8141155, 0.58070296, -0.95527834, 0.17171851, -0.24074048, 0, 0, 0)
+transform = Transform3D(-4.3711385e-08, 0.7615383, -0.64811987, 0, 0.64811987, 0.7615383, 0.99999994, 3.3287897e-08, -2.833022e-08, 0, 0, 0)
+light_volumetric_fog_energy = 2.246
+light_angular_distance = 7.54
 shadow_enabled = true
-shadow_blur = 5.5
+shadow_normal_bias = 4.695
+shadow_opacity = 0.54
+shadow_blur = 1.368
 
 [node name="Player" parent="." unique_id=790875423 instance=ExtResource("2_0xm2m")]
 wall_min_slide_angle = 0.34906584
@@ -64,7 +62,7 @@ click_particle_count = 45
 transform = Transform3D(1, 0, 0, 0, 1, 1.4901161e-08, 0, 0, 1, 0, 0, 2.3841858e-07)
 script = ExtResource("7_5vw27")
 median_rooms = 20
-edge_margin = 4
+edge_margin = 6
 random_seed = 11670
 terrain_perimeter_cells = 1
 num_lava_sources = 4
@@ -75,8 +73,9 @@ depth_step_height = 0.2
 pixels_per_cell = 16
 blur_radius = 12
 mesh_subdivisions = 4
-heightmap_displacement_amplitude = 2.7680000000000002
+heightmap_displacement_amplitude = 2.768
 export_heightmap_debug = true
+exploration_reveal_radius_cells = 4
 terrain_footprint_count = 32
 terrain_footprint_overflow_fade_count = 16
 terrain_footprint_lifetime = 11.0
@@ -85,6 +84,7 @@ terrain_footprint_strength = 0.47
 water_height_level = 2.5
 water_height_lerp_speed = 3.0
 water_surface_offset = 0.125
+water_surface_min_margin_world = 100.0
 water_material = ExtResource("10_water_material")
 scatter_internal_walls = false
 debug_internal_walls = false

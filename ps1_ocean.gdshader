@@ -20,6 +20,7 @@ uniform float pixelization_amount : hint_range(0.0, 1.0) = 0.08;
 
 uniform sampler2D DEPTH_TEXTURE : hint_depth_texture, filter_nearest;
 uniform float color_deep_fade_distance : hint_range(0.0, 10.0, 0.1) = 3.0;
+uniform float far_clip_depth_threshold : hint_range(0.9, 1.0, 0.0001) = 0.9995;
 
 uniform vec3 foam_color : source_color = vec3(1.0, 1.0, 1.0);
 uniform float foam_scale = 4.0;
@@ -65,8 +66,12 @@ void fragment() {
 
     vec3 world_terrain_pos = (INV_VIEW_MATRIX * vec4(view.xyz, 1.0)).xyz;
     vec3 world_water_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+    bool is_far_clip_depth = depth_tex >= far_clip_depth_threshold;
 
     float depth_blend = max(0.0, world_water_pos.y - world_terrain_pos.y);
+    if (is_far_clip_depth) {
+        depth_blend = color_deep_fade_distance;
+    }
 
     float depth_color_blend = clamp(depth_blend / max(0.001, color_deep_fade_distance), 0.0, 1.0);
     vec3 final_color = mix(water_color.rgb, deep_water_color.rgb, depth_color_blend);
@@ -88,7 +93,10 @@ void fragment() {
     float foam_noise = texture(noise_texture, foam_uvw).r;
     
     float eroded_depth = depth_blend + (foam_noise * foam_noise_influence);
-    float foam_mask = step(eroded_depth, foam_distance); // keep it pixelated
+    float foam_mask = 0.0;
+    if (!is_far_clip_depth) {
+        foam_mask = step(eroded_depth, foam_distance); // keep it pixelated
+    }
     vec3 textured_foam = foam_color * (0.7 + 0.3 * foam_noise);
     
     final_color = mix(final_color, textured_foam, foam_mask);

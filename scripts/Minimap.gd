@@ -16,6 +16,7 @@ extends Control
 @export var lava_source_dot_size: int = 3
 @export var highground_color: Color = Color(0.0, 1.0, 0.0)  # Bright green
 @export var highground_dot_size: int = 3
+@export_range(-180.0, 180.0, 0.1) var minimap_rotation_degrees: float = 45.0
 
 var _minimap_image: Image
 var _minimap_texture: ImageTexture
@@ -24,6 +25,8 @@ var _procedural_map: Node3D
 var _player: Node3D
 var _camera: Camera3D
 var _map_bounds: Dictionary = {}
+var _grid_width: int = 0
+var _grid_height: int = 0
 
 
 func _ready() -> void:
@@ -38,13 +41,20 @@ func _ready() -> void:
 	_texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_texture_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # Disable blur for crisp pixels
 	_texture_rect.custom_minimum_size = Vector2(minimap_size, minimap_size)
+	_texture_rect.position = Vector2.ZERO
+	_texture_rect.size = Vector2(minimap_size, minimap_size)
 	add_child(_texture_rect)
+	_apply_minimap_rotation()
 	
 	# Find procedural map and player
 	_procedural_map = NodeUtils.find(self, "procedural_map", ["/root/Main/Procedural Map"])
 	if not _procedural_map:
 		push_warning("Minimap: ProceduralMap not found!")
 		return
+
+	var regenerate_callable: Callable = Callable(self, "_generate_minimap")
+	if _procedural_map.has_signal("map_regenerated") and not _procedural_map.is_connected("map_regenerated", regenerate_callable):
+		_procedural_map.connect("map_regenerated", regenerate_callable)
 	
 	# Wait a frame for player to be placed
 	await get_tree().process_frame
@@ -52,6 +62,17 @@ func _ready() -> void:
 	
 	# Generate initial minimap
 	_generate_minimap()
+
+
+func _apply_minimap_rotation() -> void:
+	if _texture_rect == null:
+		return
+
+	var rotation_radians: float = deg_to_rad(minimap_rotation_degrees)
+	var fit_scale: float = 1.0 / maxf(absf(cos(rotation_radians)) + absf(sin(rotation_radians)), 1.0)
+	_texture_rect.pivot_offset = Vector2(minimap_size * 0.5, minimap_size * 0.5)
+	_texture_rect.rotation_degrees = minimap_rotation_degrees
+	_texture_rect.scale = Vector2(fit_scale, fit_scale)
 
 
 func _process(_delta: float) -> void:
@@ -87,8 +108,10 @@ func _generate_minimap() -> void:
 	var edge_margin: int = _procedural_map.get("edge_margin") if "edge_margin" in _procedural_map else 3
 	
 	# Calculate grid dimensions
-	var grid_w := int(floor(map_width / cell_size)) - 4
-	var grid_h := int(floor(map_height / cell_size)) - 4
+	var grid_w: int = int(floor(map_width / cell_size)) - 4
+	var grid_h: int = int(floor(map_height / cell_size)) - 4
+	_grid_width = grid_w
+	_grid_height = grid_h
 	
 	# Calculate edge offset (tiles are placed starting from edge_margin * cell_size)
 	var edge_offset: float = edge_margin * cell_size
@@ -106,34 +129,6 @@ func _generate_minimap() -> void:
 	# Create image with alpha channel to support transparency
 	_minimap_image = Image.create(grid_w, grid_h, false, Image.FORMAT_RGBA8)
 	_minimap_image.fill(background_color)
-	
-	# Get cells from procedural map
-	var cells: Array = _procedural_map.get_cells()
-	
-	# Draw walls and floors
-	for cell in cells:
-		var x := int(cell.position.x)
-		var y := int(cell.position.y)
-		
-		if x >= 0 and x < grid_w and y >= 0 and y < grid_h:
-			if cell.is_wall:
-				_minimap_image.set_pixel(x, y, wall_color)
-			elif cell.is_floor:
-				_minimap_image.set_pixel(x, y, floor_color)
-	
-	# Draw lava source markers
-	var lava_sources: Array = _procedural_map.get_lava_sources()
-	for lava_pos in lava_sources:
-		var x: int = int(lava_pos.x)
-		var y: int = int(lava_pos.y)
-		_draw_marker(_minimap_image, x, y, lava_source_color, lava_source_dot_size, grid_w, grid_h)
-	
-	# Draw highground markers
-	var highground_positions: Array = _procedural_map.get_highground_positions()
-	for high_pos in highground_positions:
-		var x: int = int(high_pos.x)
-		var y: int = int(high_pos.y)
-		_draw_marker(_minimap_image, x, y, highground_color, highground_dot_size, grid_w, grid_h)
 	
 	# Create texture
 	_minimap_texture = ImageTexture.create_from_image(_minimap_image)
@@ -154,11 +149,12 @@ func _draw_marker(image: Image, center_x: int, center_y: int, color: Color, mark
 
 ## Updates player position on minimap.
 func _update_player_position() -> void:
-	if not _player or _map_bounds.is_empty():
+	if not _player or _map_bounds.is_empty() or _grid_width <= 0 or _grid_height <= 0:
 		return
 	
 	# Redraw base minimap (copy original)
 	var temp_image: Image = _minimap_image.duplicate()
+	_draw_explored_map(temp_image)
 	
 	# Convert player world position to minimap pixel coordinates
 	var player_pos: Vector3 = _player.global_position
@@ -174,6 +170,54 @@ func _update_player_position() -> void:
 	
 	# Update texture
 	_minimap_texture.update(temp_image)
+
+
+func _draw_explored_map(image: Image) -> void:
+	if _procedural_map == null:
+		return
+
+	var explored_cells_variant: Variant = _procedural_map.call("get_explored_cells")
+	var explored_cells: Dictionary = {}
+	if explored_cells_variant is Dictionary:
+		explored_cells = explored_cells_variant
+
+	var cells_variant: Variant = _procedural_map.call("get_cells")
+	if cells_variant is Array:
+		var cells: Array = cells_variant
+		for cell in cells:
+			var x: int = int(cell.position.x)
+			var y: int = int(cell.position.y)
+			if x < 0 or x >= _grid_width or y < 0 or y >= _grid_height:
+				continue
+
+			var grid_key: String = _grid_position_key(Vector2i(x, y))
+			if not explored_cells.has(grid_key):
+				continue
+
+			if cell.is_wall:
+				image.set_pixel(x, y, wall_color)
+			elif cell.is_floor:
+				image.set_pixel(x, y, floor_color)
+
+	var lava_sources_variant: Variant = _procedural_map.call("get_lava_sources")
+	if lava_sources_variant is Array:
+		var lava_sources: Array = lava_sources_variant
+		for lava_pos in lava_sources:
+			var lava_grid_pos: Vector2i = Vector2i(int(lava_pos.x), int(lava_pos.y))
+			if explored_cells.has(_grid_position_key(lava_grid_pos)):
+				_draw_marker(image, lava_grid_pos.x, lava_grid_pos.y, lava_source_color, lava_source_dot_size, _grid_width, _grid_height)
+
+	var highground_positions_variant: Variant = _procedural_map.call("get_highground_positions")
+	if highground_positions_variant is Array:
+		var highground_positions: Array = highground_positions_variant
+		for high_pos in highground_positions:
+			var highground_grid_pos: Vector2i = Vector2i(int(high_pos.x), int(high_pos.y))
+			if explored_cells.has(_grid_position_key(highground_grid_pos)):
+				_draw_marker(image, highground_grid_pos.x, highground_grid_pos.y, highground_color, highground_dot_size, _grid_width, _grid_height)
+
+
+func _grid_position_key(grid_pos: Vector2i) -> String:
+	return "%d,%d" % [grid_pos.x, grid_pos.y]
 
 
 func _draw_camera_direction(image: Image, start_x: int, start_y: int) -> void:
