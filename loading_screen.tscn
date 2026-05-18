@@ -1,28 +1,32 @@
 [gd_scene format=3 uid="uid://bfy53wcnmln2w"]
 
 [ext_resource type="Script" uid="uid://dip7gnhpcuokn" path="res://scripts/loading_screen.gd" id="1_loading_script"]
-[ext_resource type="PackedScene" uid="uid://dp4dtin18drb7" path="res://blender/fatman.fbx" id="2_fatman"]
+[ext_resource type="SystemFont" path="res://fonts/poppins_semibold.tres" id="3_poppins_semibold"]
+[ext_resource type="SystemFont" path="res://fonts/poppins_medium.tres" id="4_poppins_medium"]
+[ext_resource type="SystemFont" path="res://fonts/poppins_bold.tres" id="5_poppins_bold"]
+[ext_resource type="PackedScene" path="res://visualizer_screen.tscn" id="6_generation_visualizer"]
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_card"]
-bg_color = Color(0.0666667, 0.0784314, 0.0941176, 0.92)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.443137, 0.309804, 0.188235, 0.65)
-corner_radius_top_left = 22
-corner_radius_top_right = 22
-corner_radius_bottom_right = 22
-corner_radius_bottom_left = 22
-shadow_color = Color(0, 0, 0, 0.35)
-shadow_size = 10
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_progress_background"]
+bg_color = Color(0.0862745, 0.0980392, 0.121569, 0.88)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.286275, 0.321569, 0.384314, 0.9)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
 
-[sub_resource type="Environment" id="Environment_preview"]
-background_mode = 1
-ambient_light_source = 3
-ambient_light_color = Color(0.729412, 0.694118, 0.654902, 1)
-ambient_light_energy = 0.7
-tonemap_mode = 2
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_progress_fill"]
+bg_color = Color(0.85098, 0.611765, 0.345098, 0.96)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_banner_panel"]
+bg_color = Color(0.98, 0.98, 0.98, 0.98)
 
 [node name="LoadingScreen" type="Control" unique_id=595521388]
 layout_mode = 3
@@ -42,148 +46,133 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.0313726, 0.0352941, 0.0431373, 1)
 
-[node name="GlowA" type="ColorRect" parent="." unique_id=506234031]
-layout_mode = 1
-offset_left = -108.0
-offset_top = -84.0
-offset_right = 608.0
-offset_bottom = 454.0
-rotation = 0.23
-color = Color(0.64728814, 0.47719654, 0.29537445, 0.18039216)
-
-[node name="GlowB" type="ColorRect" parent="." unique_id=1759818641]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -746.0
-offset_top = -412.0
-offset_right = -56.0
-offset_bottom = 84.0
-rotation = -0.19
-color = Color(0.43411496, 0.8015499, 0.88403547, 0.2)
-
-[node name="MarginContainer" type="MarginContainer" parent="." unique_id=887818314]
+[node name="Overlay" type="Control" parent="." unique_id=1788761287]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 72.0
-offset_top = 56.0
-offset_right = -72.0
-offset_bottom = -56.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="GenerationVisualizer" parent="Overlay" unique_id=1886479741 instance=ExtResource("6_generation_visualizer")]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer" unique_id=488266882]
-layout_mode = 2
-theme_override_constants/separation = 28
+[node name="LeftBannerSpacer" type="Control" parent="Overlay" unique_id=214457671]
+layout_mode = 1
+anchors_preset = 4
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 1.0
+offset_left = 0.0
+offset_top = 0.0
+offset_right = 128.0
+offset_bottom = 0.0
+grow_vertical = 2
+mouse_filter = 2
 
-[node name="InfoPanel" type="PanelContainer" parent="MarginContainer/HBoxContainer" unique_id=1968903508]
-custom_minimum_size = Vector2(540, 0)
+[node name="RightBanner" type="Panel" parent="Overlay" unique_id=1628855842]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 1.0
+anchor_top = 0.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -128.0
+offset_top = 0.0
+offset_right = 0.0
+offset_bottom = 0.0
+grow_horizontal = 0
+grow_vertical = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_banner_panel")
+
+[node name="SquaresMargin" type="MarginContainer" parent="Overlay/RightBanner" unique_id=571124679]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="SquaresVBox" type="VBoxContainer" parent="Overlay/RightBanner/SquaresMargin" unique_id=1145436002]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_styles/panel = SubResource("StyleBoxFlat_card")
+size_flags_vertical = 4
+mouse_filter = 2
+theme_override_constants/separation = 8
 
-[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/HBoxContainer/InfoPanel" unique_id=1512470096]
-layout_mode = 2
-theme_override_constants/margin_left = 34
-theme_override_constants/margin_top = 30
-theme_override_constants/margin_right = 34
-theme_override_constants/margin_bottom = 30
+[node name="ContentMargin" type="MarginContainer" parent="Overlay" unique_id=153069866]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 160
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 128
+theme_override_constants/margin_bottom = 24
 
-[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer" unique_id=190991765]
+[node name="VBoxContainer" type="VBoxContainer" parent="Overlay/ContentMargin" unique_id=1549105750]
 layout_mode = 2
-theme_override_constants/separation = 18
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
 
-[node name="OverlineLabel" type="Label" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=377881558]
-modulate = Color(0.843137, 0.666667, 0.447059, 0.9)
+[node name="TopOverlay" type="VBoxContainer" parent="Overlay/ContentMargin/VBoxContainer" unique_id=1445666053]
 layout_mode = 2
-text = "VOLCANO EXTRACTION // FIELD PREP"
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
 
-[node name="HeadlineLabel" type="Label" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=1646074972]
-layout_mode = 2
-theme_override_font_sizes/font_size = 38
-text = "You've entered through the Gift Shop."
-
-[node name="Divider" type="HSeparator" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=641190662]
+[node name="TopSpacer" type="Control" parent="Overlay/ContentMargin/VBoxContainer/TopOverlay" unique_id=2048936059]
+custom_minimum_size = Vector2(0, 4)
 layout_mode = 2
 
-[node name="StageTitleLabel" type="Label" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=1061042717]
+[node name="TitleCenter" type="CenterContainer" parent="Overlay/ContentMargin/VBoxContainer/TopOverlay" unique_id=166436838]
 layout_mode = 2
-theme_override_font_sizes/font_size = 24
-text = "Consulting the crater"
 
-[node name="StageDescriptionLabel" type="Label" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=1191478707]
-custom_minimum_size = Vector2(0, 120)
+[node name="VBoxContainer" type="VBoxContainer" parent="Overlay/ContentMargin/VBoxContainer/TopOverlay/TitleCenter" unique_id=295969482]
 layout_mode = 2
-text = "Waiting for the mountain to remember where it put the walkable ground."
-autowrap_mode = 3
+theme_override_constants/separation = 6
 
-[node name="ProgressBar" type="ProgressBar" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=905974256]
-custom_minimum_size = Vector2(0, 22)
+[node name="TitleLabel" type="Label" parent="Overlay/ContentMargin/VBoxContainer/TopOverlay/TitleCenter/VBoxContainer" unique_id=1935297963]
 layout_mode = 2
-show_percentage = false
-
-[node name="ProgressLabel" type="Label" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=1869871671]
-layout_mode = 2
-text = "0% ready for extraction"
-horizontal_alignment = 2
-
-[node name="HintLabel" type="Label" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=2070856268]
-modulate = Color(0.733333, 0.756863, 0.788235, 0.72)
-layout_mode = 2
-text = "Tip: the loader is narrating the real map build, not just politely stalling."
-autowrap_mode = 3
-
-[node name="ContinueLabel" type="Label" parent="MarginContainer/HBoxContainer/InfoPanel/MarginContainer/VBoxContainer" unique_id=1035982835]
-visible = false
-layout_mode = 2
-theme_override_font_sizes/font_size = 22
-text = "Press any key to descend into poor decisions"
+theme_override_colors/font_color = Color(0.972549, 0.964706, 0.94902, 1)
+theme_override_fonts/font = ExtResource("3_poppins_semibold")
+theme_override_font_sizes/font_size = 48
+text = "Entering through the Gift Shop..."
 horizontal_alignment = 1
 
-[node name="PreviewPanel" type="PanelContainer" parent="MarginContainer/HBoxContainer" unique_id=996423782]
-custom_minimum_size = Vector2(560, 0)
+[node name="SubtitleLabel" type="Label" parent="Overlay/ContentMargin/VBoxContainer/TopOverlay/TitleCenter/VBoxContainer" unique_id=1675566218]
 layout_mode = 2
-size_flags_horizontal = 3
-theme_override_styles/panel = SubResource("StyleBoxFlat_card")
+theme_override_colors/font_color = Color(0.803922, 0.827451, 0.862745, 0.92)
+theme_override_fonts/font = ExtResource("4_poppins_medium")
+theme_override_font_sizes/font_size = 18
+text = "Preparing load"
+horizontal_alignment = 1
 
-[node name="SubViewportContainer" type="SubViewportContainer" parent="MarginContainer/HBoxContainer/PreviewPanel" unique_id=1965413500]
+[node name="Spacer" type="Control" parent="Overlay/ContentMargin/VBoxContainer" unique_id=12061407]
 layout_mode = 2
-stretch = true
+size_flags_vertical = 3
 
-[node name="SubViewport" type="SubViewport" parent="MarginContainer/HBoxContainer/PreviewPanel/SubViewportContainer" unique_id=171264577]
-transparent_bg = true
-handle_input_locally = false
-size = Vector2i(870, 964)
-render_target_update_mode = 4
-
-[node name="PreviewRoot" type="Node3D" parent="MarginContainer/HBoxContainer/PreviewPanel/SubViewportContainer/SubViewport" unique_id=290693819]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.013405323, 0, 0)
-
-[node name="WorldEnvironment" type="WorldEnvironment" parent="MarginContainer/HBoxContainer/PreviewPanel/SubViewportContainer/SubViewport/PreviewRoot" unique_id=1373213578]
-environment = SubResource("Environment_preview")
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="MarginContainer/HBoxContainer/PreviewPanel/SubViewportContainer/SubViewport/PreviewRoot" unique_id=1676991025]
-transform = Transform3D(0.866025, -0.12941, 0.482963, 0, 0.965926, 0.258819, -0.5, -0.224144, 0.836516, 0, 0, 0)
-light_energy = 2.2
-shadow_enabled = true
-
-[node name="FillLight" type="OmniLight3D" parent="MarginContainer/HBoxContainer/PreviewPanel/SubViewportContainer/SubViewport/PreviewRoot" unique_id=996069152]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.2, 2.4, 2)
-light_color = Color(0.988235, 0.623529, 0.380392, 1)
-light_energy = 2.6
-omni_range = 8.0
-
-[node name="PreviewPivot" type="Node3D" parent="MarginContainer/HBoxContainer/PreviewPanel/SubViewportContainer/SubViewport/PreviewRoot" unique_id=1468117319]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.16729581, 0)
-
-[node name="FatmanPreview" parent="MarginContainer/HBoxContainer/PreviewPanel/SubViewportContainer/SubViewport/PreviewRoot/PreviewPivot" unique_id=1540880886 instance=ExtResource("2_fatman")]
-transform = Transform3D(3.2, 0, 0, 0, 3.2, 0, 0, 0, 3.2, 0, 0, 0)
-
-[node name="Camera3D" type="Camera3D" parent="MarginContainer/HBoxContainer/PreviewPanel/SubViewportContainer/SubViewport/PreviewRoot" unique_id=2096871247]
-transform = Transform3D(0.0027676309, -0.24507567, 0.9695, 0.069944486, 0.96717674, 0.24428871, -0.99754703, 0.06713508, 0.019818483, 2.530817, 0.80462486, 0.060922623)
-fov = 30.0
+[node name="ProgressBar" type="ProgressBar" parent="Overlay/ContentMargin/VBoxContainer" unique_id=502033975]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.972549, 0.964706, 0.94902, 1)
+theme_override_fonts/font = ExtResource("5_poppins_bold")
+theme_override_font_sizes/font_size = 18
+theme_override_styles/background = SubResource("StyleBoxFlat_progress_background")
+theme_override_styles/fill = SubResource("StyleBoxFlat_progress_fill")
+step = 1.0
+show_percentage = false

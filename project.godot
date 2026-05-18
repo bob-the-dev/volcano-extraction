@@ -32,6 +32,10 @@ window/size/viewport_height=1080
 
 enabled=PackedStringArray("res://addons/phantom_camera/plugin.cfg")
 
+[gui]
+
+theme/custom_font="res://fonts/poppins_system_font.tres"
+
 [input]
 
 move_left={

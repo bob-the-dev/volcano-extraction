@@ -3,10 +3,10 @@
 ## Project Context
 
 - **Engine:** Godot 4.5 (GDScript 2.0)
-- **Game Name:** Volcano Extraction
-- **Game Type:** 3D action/exploration game
-- **Key Systems:** Character movement, enemy AI with navigation, camera management
-- **Player Character:** Blobby figure without distinct head/neck separation, has distinct arms with 4-fingered hands (not compatible with Mixamo auto-rigging)
+- **Game Name:** Enter through the Gift Shop
+- **Game Type:** Time Based Extraction Roguelike
+- **Key Systems:** Procedural Map Generation, Time Based Events, Item / Character Extraction theme.
+- **Player Character:** Blobby figure without distinct head/neck separation, has distinct arms with 4-fingered hands
 
 ## Current Work in Progress
 

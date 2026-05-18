@@ -1,8 +1,9 @@
 extends CharacterBody3D
 
-@onready var animation_player: AnimationPlayer = $AnimationPlayer
 @onready var camera: Camera3D = get_viewport().get_camera_3d()
-@onready var visual_root: Node3D = $"character-human"
+@onready var visual_root: Node3D = $VisualRoot
+@onready var visual_motion_root: Node3D = $VisualRoot/FatmanMotionRoot
+@onready var face_sprite: Sprite3D = $VisualRoot/FatmanMotionRoot/FaceSprite
 
 @export var can_move : bool = true
 @export var has_gravity : bool = true
@@ -20,6 +21,24 @@ extends CharacterBody3D
 @export var floor_snap : float = 0.1
 ## How quickly the visible model aligns to the ground normal.
 @export var ground_alignment_speed : float = 10.0
+
+@export_group("Visual Motion")
+## Vertical float amount while standing still.
+@export var idle_float_height: float = 0.03
+## Idle float cycles per second.
+@export var idle_float_speed: float = 0.8
+## Vertical bob amount while walking.
+@export var walk_bob_height: float = 0.05
+## Walk wobble cycles per second.
+@export var walk_wobble_speed: float = 2.6
+## Side-to-side roll while walking.
+@export var walk_roll_degrees: float = 8.0
+## Gentle yaw sway while walking.
+@export var walk_yaw_degrees: float = 5.0
+## Local position of the simple face sprite on the fatman model.
+@export var face_local_position: Vector3 = Vector3(0.0, 0.56, 0.16)
+## Size multiplier for the simple face sprite.
+@export var face_scale: float = 0.18
 
 @export_group("Camera Orbit")
 ## Scene path to the PhantomCamera3D node that orbits around the player.
@@ -91,17 +110,27 @@ extends CharacterBody3D
 
 @export_group("Click Indicator")
 ## Show particle effect when clicking
-@export var show_click_effect : bool = true
-## Color of click indicator particles
-@export var click_effect_color : Color = Color(1.0, 0.95, 0.7, 0.8)
+@export var show_click_effect : bool = true:
+	set(value):
+		show_click_effect = value
+		_refresh_click_indicator_scene()
+## Color of click indicator particles when no custom material is assigned.
+@export var click_effect_color : Color = Color(1.0, 0.95, 0.7, 0.8):
+	set(value):
+		click_effect_color = value
+		_refresh_click_indicator_scene()
+## Optional material override used by the click indicator particle quads.
+@export var click_effect_material: Material:
+	set(value):
+		click_effect_material = value
+		_refresh_click_indicator_scene()
 ## Number of particles in puff
-@export var click_particle_count : int = 15
+@export var click_particle_count : int = 15:
+	set(value):
+		click_particle_count = value
+		_refresh_click_indicator_scene()
 ## Height offset for particles above clicked position
 @export var click_particle_height : float = 0.25
-
-@export_group("Debug")
-## Show waypoint markers along path (controlled by procedural_map.show_grid_debug)
-@export var waypoint_debug_color: Color = Color(1, 1, 0, 0.8)
 
 @export_group("Pathfinding Costs")
 ## Cost multiplier per depth level (higher depth = deeper = more cost)
@@ -129,7 +158,6 @@ var _cell_depth_by_id: Dictionary = {}
 var _current_path: Array[Vector3] = []
 var _current_path_index: int = 0
 var _grid_cell_size: float = 2.0  # Default, will be updated from map
-var _debug_waypoint_markers: Array[Node3D] = []
 var _footstep_interval_timer: float = 0.0
 var _next_footstep_interval: float = 0.18
 var _was_emitting_terrain_footprints: bool = false
@@ -141,6 +169,23 @@ var _camera_orbit_rig: Node3D = null
 var _camera_orbit_tween: Tween = null
 var _camera_orbit_base_horizontal_rotation: float = 0.0
 var _has_camera_orbit_base_horizontal_rotation: bool = false
+var _visual_motion_time: float = 0.0
+var _visual_motion_base_position: Vector3 = Vector3.ZERO
+
+
+func _toggle_fullscreen_mode() -> void:
+	var current_window_mode: DisplayServer.WindowMode = DisplayServer.window_get_mode()
+	if current_window_mode == DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		return
+
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+
+
+func _restart_current_scene() -> void:
+	var reload_error: Error = get_tree().reload_current_scene()
+	if reload_error != OK:
+		push_error("Failed to reload the current scene.")
 
 
 func _log_camera_orbit(message: String) -> void:
@@ -190,8 +235,7 @@ func _ready() -> void:
 		# Check if map already has cells (already generated)
 		if "_floor_cells" in procedural_map:
 			var floor_cells: Array = procedural_map._floor_cells
-			var lava_cells: Array = procedural_map._lava_cells if "_lava_cells" in procedural_map else []
-			if not floor_cells.is_empty() or not lava_cells.is_empty():
+			if not floor_cells.is_empty():
 				print("[Player] Map already generated, initializing pathfinding immediately")
 				call_deferred("_initialize_pathfinding")
 			else:
@@ -200,10 +244,14 @@ func _ready() -> void:
 			print("[Player] Map not yet generated, waiting for map_regenerated signal")
 	else:
 		print("[Player] ERROR: No procedural map found - pathfinding will not work!")
-	
-	var idle = animation_player.get_animation('idle')
-	idle.loop_mode = Animation.LOOP_LINEAR
-	animation_player.play('idle')
+
+	if visual_motion_root:
+		_visual_motion_base_position = visual_motion_root.position
+
+	if face_sprite:
+		face_sprite.position = face_local_position
+		face_sprite.scale = Vector3.ONE * face_scale
+		_ensure_face_texture()
 
 
 ## Called when the map regenerates
@@ -237,20 +285,18 @@ func _initialize_pathfinding() -> void:
 	# Get cells from map
 	var cells: Array = procedural_map._cells if "_cells" in procedural_map else []
 	var floor_cells: Array = procedural_map._floor_cells if "_floor_cells" in procedural_map else []
-	var lava_cells: Array = procedural_map._lava_cells if "_lava_cells" in procedural_map else []
 	
-	print("[Pathfinding] Total cells: ", cells.size(), " | Floor cells: ", floor_cells.size(), " | Lava cells: ", lava_cells.size())
+	print("[Pathfinding] Total cells: ", cells.size(), " | Floor cells: ", floor_cells.size())
 	
 	if cells.is_empty():
 		print("[Pathfinding] ERROR: no cells found in map - map may not be generated yet")
 		return
 	
-	if floor_cells.is_empty() and lava_cells.is_empty():
+	if floor_cells.is_empty():
 		print("[Pathfinding] ERROR: no walkable cells found in map")
 		return
 	
-	# Combine floor and lava cells for pathfinding
-	var walkable_cells: Array = floor_cells + lava_cells
+	var walkable_cells: Array = floor_cells
 	
 	# Add all walkable cells to AStar with appropriate weights
 	var added_count: int = 0
@@ -485,6 +531,16 @@ func _find_nearest_walkable_point(target_grid: Vector2) -> int:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_ESCAPE or event.physical_keycode == KEY_ESCAPE):
+		_toggle_fullscreen_mode()
+		get_viewport().set_input_as_handled()
+		return
+
+	if event is InputEventKey and event.pressed and not event.echo and event.shift_pressed and (event.keycode == KEY_R or event.physical_keycode == KEY_R):
+		_restart_current_scene()
+		get_viewport().set_input_as_handled()
+		return
+
 	if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB):
 		_log_camera_orbit("Tab detected. keycode=%s physical_keycode=%s" % [event.keycode, event.physical_keycode])
 		_rotate_camera_clockwise()
@@ -606,6 +662,7 @@ func _physics_process(delta: float) -> void:
 	# Move and slide
 	move_and_slide()
 	_align_visual_to_ground(delta)
+	_update_visual_motion(delta)
 	_update_terrain_footprints(delta, position_before_move)
 
 
@@ -638,6 +695,59 @@ func _align_visual_to_ground(delta: float) -> void:
 	var target_quaternion: Quaternion = target_basis.get_rotation_quaternion()
 	var weight: float = clamp(ground_alignment_speed * delta, 0.0, 1.0)
 	visual_root.transform.basis = Basis(current_quaternion.slerp(target_quaternion, weight))
+
+
+func _update_visual_motion(delta: float) -> void:
+	if not visual_motion_root:
+		return
+
+	var horizontal_speed: float = Vector2(velocity.x, velocity.z).length()
+	var move_ratio: float = 0.0
+	if move_speed > 0.001:
+		move_ratio = clamp(horizontal_speed / move_speed, 0.0, 1.0)
+
+	var is_moving: bool = move_ratio > 0.1
+	var motion_frequency: float = walk_wobble_speed if is_moving else idle_float_speed
+	_visual_motion_time += delta * motion_frequency
+
+	var phase: float = _visual_motion_time * TAU
+	var height_offset: float = sin(phase) * idle_float_height
+	var yaw_radians: float = 0.0
+	var roll_radians: float = 0.0
+	if is_moving:
+		height_offset = sin(phase) * walk_bob_height * move_ratio
+		yaw_radians = sin(phase * 0.5) * deg_to_rad(walk_yaw_degrees) * move_ratio
+		roll_radians = sin(phase) * deg_to_rad(walk_roll_degrees) * move_ratio
+
+	visual_motion_root.position = _visual_motion_base_position + Vector3(0.0, height_offset, 0.0)
+	visual_motion_root.rotation = Vector3(0.0, yaw_radians, roll_radians)
+
+
+func _ensure_face_texture() -> void:
+	if not face_sprite:
+		return
+	if face_sprite.texture != null:
+		return
+
+	face_sprite.texture = _create_face_texture()
+	face_sprite.shaded = false
+
+
+func _create_face_texture() -> ImageTexture:
+	var face_image: Image = Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	var transparent: Color = Color(0.0, 0.0, 0.0, 0.0)
+	var face_color: Color = Color(1.0, 0.95, 0.88, 1.0)
+	var feature_color: Color = Color(0.07, 0.03, 0.03, 1.0)
+
+	face_image.fill(transparent)
+	face_image.fill_rect(Rect2i(4, 6, 24, 20), face_color)
+	face_image.fill_rect(Rect2i(9, 12, 4, 4), feature_color)
+	face_image.fill_rect(Rect2i(19, 12, 4, 4), feature_color)
+	face_image.fill_rect(Rect2i(10, 21, 12, 2), feature_color)
+	face_image.fill_rect(Rect2i(8, 19, 2, 2), feature_color)
+	face_image.fill_rect(Rect2i(22, 19, 2, 2), feature_color)
+
+	return ImageTexture.create_from_image(face_image)
 
 
 func _update_terrain_footprints(delta: float, position_before_move: Vector3) -> void:
@@ -781,7 +891,7 @@ func _handle_direct_input(delta: float) -> void:
 		velocity.z = 0
 		return
 	
-	var input_dir := Input.get_vector(input_left, input_right, input_forward, input_back)
+	var input_dir: Vector2 = Input.get_vector(input_left, input_right, input_forward, input_back)
 	
 	if input_dir.length() > 0:
 		# Move in input direction
@@ -789,19 +899,12 @@ func _handle_direct_input(delta: float) -> void:
 		velocity.z = input_dir.y * move_speed
 		
 		# Rotate to face direction
-		var target_rotation := atan2(input_dir.x, input_dir.y)
+		var target_rotation: float = atan2(input_dir.x, input_dir.y)
 		rotation.y = lerp_angle(rotation.y, target_rotation, rotation_speed * delta)
-		
-		# Play walk animation
-		if animation_player.current_animation != 'walk':
-			animation_player.play('walk')
 	else:
 		# Stop moving
 		velocity.x = move_toward(velocity.x, 0, move_speed)
 		velocity.z = move_toward(velocity.z, 0, move_speed)
-		
-		if animation_player.current_animation == 'walk':
-			animation_player.play('idle')
 
 
 ## Handle click-to-move
@@ -809,8 +912,6 @@ func _handle_click_to_move(delta: float) -> void:
 	if not can_move or not _has_target:
 		velocity.x = move_toward(velocity.x, 0, move_speed)
 		velocity.z = move_toward(velocity.z, 0, move_speed)
-		if animation_player.current_animation == 'walk':
-			animation_player.play('idle')
 		return
 	
 	# Check if we have a path to follow
@@ -818,8 +919,6 @@ func _handle_click_to_move(delta: float) -> void:
 		_has_target = false
 		velocity.x = move_toward(velocity.x, 0, move_speed)
 		velocity.z = move_toward(velocity.z, 0, move_speed)
-		if animation_player.current_animation == 'walk':
-			animation_player.play('idle')
 		_unhighlight_tile(_target_tile)
 		_target_tile = null
 		_clear_target_indicator()
@@ -843,12 +942,9 @@ func _handle_click_to_move(delta: float) -> void:
 			_has_target = false
 			_current_path.clear()
 			_current_path_index = 0
-			_clear_waypoint_debug()  # Clear debug markers
 			_clear_target_indicator()  # Clear target indicator
 			velocity.x = move_toward(velocity.x, 0, move_speed)
 			velocity.z = move_toward(velocity.z, 0, move_speed)
-			if animation_player.current_animation == 'walk':
-				animation_player.play('idle')
 			# Unhighlight target tile when reached
 			_unhighlight_tile(_target_tile)
 			_target_tile = null
@@ -881,12 +977,8 @@ func _handle_click_to_move(delta: float) -> void:
 	
 	# Rotate to face movement direction
 	if direction_2d.length() > 0.01:
-		var target_rotation := atan2(direction_2d.x, direction_2d.y)
+		var target_rotation: float = atan2(direction_2d.x, direction_2d.y)
 		rotation.y = lerp_angle(rotation.y, target_rotation, rotation_speed * delta)
-	
-	# Play walk animation
-	if animation_player.current_animation != 'walk':
-		animation_player.play('walk')
 
 
 ## Handle mouse click raycast
@@ -945,7 +1037,6 @@ func _handle_click(screen_position: Vector2) -> void:
 			_highlight_tile(_target_tile, target_color)
 			_spawn_target_indicator(target_pos)  # Show floating indicator above target
 			_spawn_click_indicator(target_pos)  # Show particles at clicked position
-			_show_waypoint_debug(path)  # Show debug waypoint markers
 			
 			if debug_movement:
 				print("Path set to tile with ", path.size(), " waypoints")
@@ -972,7 +1063,6 @@ func _handle_click(screen_position: Vector2) -> void:
 			_has_target = true
 			_spawn_target_indicator(target_pos)  # Show floating indicator above target
 			_spawn_click_indicator(target_pos)  # Show particles at clicked position
-			_show_waypoint_debug(path)  # Show debug waypoint markers
 			
 			if debug_movement:
 				print("Path set to platform with ", path.size(), " waypoints")
@@ -999,7 +1089,6 @@ func _handle_click(screen_position: Vector2) -> void:
 			_has_target = true
 			_spawn_target_indicator(target_pos)  # Show floating indicator above target
 			_spawn_click_indicator(target_pos)  # Show particles at clicked position
-			_show_waypoint_debug(path)  # Show debug waypoint markers
 			
 			if debug_movement:
 				print("Path set with ", path.size(), " waypoints")
@@ -1088,13 +1177,35 @@ func _unhighlight_tile(tile: Node3D) -> void:
 			_stored_materials.erase(tile)
 
 
+func _refresh_click_indicator_scene() -> void:
+	_click_indicator_scene = null
+	if is_inside_tree():
+		_setup_click_indicator()
+
+
+func _build_click_indicator_draw_material() -> Material:
+	if click_effect_material != null:
+		return click_effect_material.duplicate()
+
+	var particle_material: StandardMaterial3D = StandardMaterial3D.new()
+	particle_material.albedo_color = click_effect_color
+	particle_material.emission_enabled = true
+	particle_material.emission = click_effect_color
+	particle_material.emission_energy = 0.5
+	particle_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	particle_material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	particle_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return particle_material
+
+
 ## Setup click indicator particle system
 func _setup_click_indicator() -> void:
+	_click_indicator_scene = null
 	if not show_click_effect:
 		return
 	
 	# Create a reusable particle scene (we'll instance it on demand)
-	var particles := GPUParticles3D.new()
+	var particles: GPUParticles3D = GPUParticles3D.new()
 	particles.emitting = false
 	particles.one_shot = true
 	particles.amount = click_particle_count
@@ -1120,24 +1231,13 @@ func _setup_click_indicator() -> void:
 	particles.process_material = process_material
 	
 	# Create particle mesh (small spheres)
-	var particle_mesh := QuadMesh.new()
+	var particle_mesh: QuadMesh = QuadMesh.new()
 	particle_mesh.size = Vector2(0.06, 0.06)
-	
-	# Create particle material with color
-	var particle_material := StandardMaterial3D.new()
-	particle_material.albedo_color = click_effect_color
-	particle_material.emission_enabled = true
-	particle_material.emission = click_effect_color
-	particle_material.emission_energy = 0.5
-	particle_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	particle_material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
-	particle_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	
-	particle_mesh.material = particle_material
+	particle_mesh.material = _build_click_indicator_draw_material()
 	particles.draw_pass_1 = particle_mesh
 	
 	# Store as packed scene for easy instantiation
-	var packed := PackedScene.new()
+	var packed: PackedScene = PackedScene.new()
 	packed.pack(particles)
 	_click_indicator_scene = packed
 
@@ -1214,51 +1314,3 @@ func _spawn_click_indicator(spawn_position: Vector3) -> void:
 	await get_tree().create_timer(particles.lifetime + 0.5).timeout
 	if is_instance_valid(particles):
 		particles.queue_free()
-
-
-## Clear debug waypoint markers
-func _clear_waypoint_debug() -> void:
-	for marker in _debug_waypoint_markers:
-		if is_instance_valid(marker):
-			marker.queue_free()
-	_debug_waypoint_markers.clear()
-
-
-## Show debug markers for waypoints along path
-func _show_waypoint_debug(path: Array[Vector3]) -> void:
-	# Only show if procedural map has debug enabled
-	if not procedural_map or not ("show_grid_debug" in procedural_map):
-		return
-	
-	if not procedural_map.show_grid_debug:
-		return
-	
-	_clear_waypoint_debug()
-	
-	var index := 0
-	for waypoint in path:
-		var marker := CSGSphere3D.new()
-		marker.radius = 0.15
-		marker.material = StandardMaterial3D.new()
-		marker.material.albedo_color = waypoint_debug_color
-		marker.material.emission_enabled = true
-		marker.material.emission = waypoint_debug_color
-		marker.material.emission_energy = 0.5
-		
-		get_tree().root.add_child(marker)
-		marker.global_position = waypoint
-		_debug_waypoint_markers.append(marker)
-		
-		# Add text label with waypoint number
-		if index < 10:  # Only label first 10 to avoid clutter
-			var label := Label3D.new()
-			label.text = str(index)
-			label.pixel_size = 0.01
-			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			label.modulate = Color(1, 1, 0, 1)
-			marker.add_child(label)
-			label.position = Vector3(0, 0.3, 0)
-		
-		index += 1
-	
-	print("[Debug] Showing ", path.size(), " waypoint markers")

@@ -1,6 +1,6 @@
 [gd_resource type="ShaderMaterial" format=3 uid="uid://dnokpgg4edfw7"]
 
-[ext_resource type="Shader" uid="uid://cy7je2p7dnvdu" path="res://shaders/psOneWater/ps1_ocean.gdshader" id="1_a4mej"]
+[ext_resource type="Shader" uid="uid://cy7je2p7dnvdu" path="res://ps1_ocean.gdshader" id="1_a4mej"]
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_3v432"]
 frequency = 0.025
@@ -12,22 +12,23 @@ seamless = true
 [resource]
 render_priority = 1
 shader = ExtResource("1_a4mej")
-shader_parameter/wave_frequency = 2.0
-shader_parameter/wave_amplitude = 0.04
+shader_parameter/wave_frequency = 0.0
+shader_parameter/wave_amplitude = 0.0
 shader_parameter/wave_speed = 0.4
 shader_parameter/noise_texture = SubResource("NoiseTexture3D_aywab")
-shader_parameter/caustic_color = Color(0, 0, 0, 1)
-shader_parameter/caustic_scale = 40.0
-shader_parameter/caustic_speed = 0.02
-shader_parameter/caustic_intensity = 1.3410000636975
-shader_parameter/caustic_sharpness = 0.9390000446025
-shader_parameter/caustic_falloff = 0.0
-shader_parameter/lava_color = Color(0, 0, 0, 1)
-shader_parameter/deep_lava_color = Color(1.4369954, 0.5413267, 0, 1)
+shader_parameter/caustic_color = Color(0.4397409, 0.10399803, 0, 1)
+shader_parameter/caustic_scale = 100.0
+shader_parameter/caustic_speed = 0.025
+shader_parameter/caustic_intensity = 1.978000093955
+shader_parameter/caustic_sharpness = 0.9130000433675
+shader_parameter/caustic_falloff = 0.0970000046075
+shader_parameter/lava_color = Color(0, 0, 0, 0.6509804)
+shader_parameter/deep_lava_color = Color(1.8247963, 0.69283086, 0, 1)
 shader_parameter/pixelization_amount = 0.0
-shader_parameter/color_deep_fade_distance = 0.70000001043084
-shader_parameter/foam_color = Color(0.5091667, 0.33151606, 0.27848497, 1)
-shader_parameter/foam_scale = 40.0
-shader_parameter/foam_speed = 0.05
+shader_parameter/color_deep_fade_distance = 1.70000002533204
+shader_parameter/far_clip_depth_threshold = 0.9995
+shader_parameter/foam_color = Color(3.2944162, 1.1031802, 0.44331938, 1)
+shader_parameter/foam_scale = 30.0
+shader_parameter/foam_speed = 0.04
 shader_parameter/foam_distance = 0.0499999988824
-shader_parameter/foam_noise_influence = 0.02999999932944
+shader_parameter/foam_noise_influence = 0.0499999988824

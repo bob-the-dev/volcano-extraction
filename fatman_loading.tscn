@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://bxfqjc5w73131"]
 
 [ext_resource type="PackedScene" uid="uid://dp4dtin18drb7" path="res://blender/fatman.fbx" id="1_v7org"]
+[ext_resource type="PackedScene" uid="uid://bknmich6p0hft" path="res://player.tscn" id="2_ere8e"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ere8e"]
 diffuse_mode = 3
@@ -9,5 +10,9 @@ albedo_color = Color(0.7922699, 0.48701483, 0.046673246, 1)
 
 [node name="fatman" unique_id=273550357 instance=ExtResource("1_v7org")]
 
-[node name="Body" parent="." index="0" unique_id=1444024954]
+[node name="Body" parent="." index="0" unique_id=918694175]
+visible = false
 surface_material_override/0 = SubResource("StandardMaterial3D_ere8e")
+
+[node name="Player" parent="." index="2" unique_id=2083504003 instance=ExtResource("2_ere8e")]
+transform = Transform3D(-7.212379e-09, 0, 0.165, 0, 0.165, 0, -0.165, 0, -7.212379e-09, 0, 0.02, 0)

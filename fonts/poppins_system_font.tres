@@ -1,0 +1,4 @@
+[gd_resource type="SystemFont" format=3 uid="uid://dkr4y8dyfgj6g"]
+
+[resource]
+font_names = PackedStringArray("Poppins")

@@ -101,11 +101,25 @@ func _generate_minimap() -> void:
 	if not _procedural_map:
 		return
 	
-	# Get map properties (using get() for dynamic access)
-	var map_width: float = _procedural_map.get("map_width")
-	var map_height: float = _procedural_map.get("map_height")
-	var cell_size: float = _procedural_map.get("cell_size")
-	var edge_margin: int = _procedural_map.get("edge_margin") if "edge_margin" in _procedural_map else 3
+	# Guard dynamic property access so a missing or invalid map script does not assign Nil to typed locals.
+	var map_width_value: Variant = _procedural_map.get("map_width")
+	var map_height_value: Variant = _procedural_map.get("map_height")
+	var cell_size_value: Variant = _procedural_map.get("cell_size")
+	var edge_margin_value: Variant = _procedural_map.get("edge_margin")
+	if map_width_value == null or map_height_value == null or cell_size_value == null:
+		push_warning("Minimap: Procedural map properties unavailable, skipping minimap generation.")
+		return
+
+	var map_width: float = float(map_width_value)
+	var map_height: float = float(map_height_value)
+	var cell_size: float = float(cell_size_value)
+	if cell_size <= 0.0:
+		push_warning("Minimap: Invalid cell_size, skipping minimap generation.")
+		return
+
+	var edge_margin: int = 3
+	if edge_margin_value != null:
+		edge_margin = int(edge_margin_value)
 	
 	# Calculate grid dimensions
 	var grid_w: int = int(floor(map_width / cell_size)) - 4

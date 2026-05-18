@@ -1,7 +1,11 @@
 [gd_resource type="StandardMaterial3D" format=3 uid="uid://cu0cc4f3182h3"]
 
 [resource]
-shading_mode = 0
-diffuse_mode = 3
-specular_mode = 1
-albedo_color = Color(0.34096858, 0.5995725, 0.6459152, 1)
+diffuse_mode = 1
+disable_ambient_light = true
+disable_fog = true
+disable_specular_occlusion = true
+albedo_color = Color(0, 0, 0, 1)
+subsurf_scatter_enabled = true
+subsurf_scatter_strength = 0.21
+subsurf_scatter_skin_mode = true

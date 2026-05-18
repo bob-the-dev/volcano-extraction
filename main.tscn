@@ -5,25 +5,30 @@
 [ext_resource type="Script" uid="uid://djs5e7lkbo60e" path="res://scripts/procedural_map.gd" id="7_5vw27"]
 [ext_resource type="Script" uid="uid://lvdibt8falnc" path="res://scripts/Minimap.gd" id="8_minimap"]
 [ext_resource type="Script" uid="uid://cjwi6sdjl523b" path="res://scripts/WaterControls.gd" id="9_lava_controls"]
-[ext_resource type="Material" uid="uid://dnokpgg4edfw7" path="res://shaders/psOneLava.tres" id="10_lava_material"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_as1t3"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+sky_curve = 0.10606598
 ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
 
 [sub_resource type="Sky" id="Sky_744mi"]
 sky_material = SubResource("ProceduralSkyMaterial_as1t3")
 
 [sub_resource type="Environment" id="Environment_c5lsl"]
-background_mode = 1
+background_mode = 2
 sky = SubResource("Sky_744mi")
 ambient_light_source = 1
 reflected_light_source = 2
 tonemap_mode = 2
+fog_enabled = true
 fog_light_color = Color(0, 0, 0, 1)
+fog_height_density = -0.5647
 volumetric_fog_enabled = true
-volumetric_fog_albedo = Color(0.14044744, 0.14044744, 0.14044744, 1)
-adjustment_brightness = 0.89
+volumetric_fog_density = 0.1175
+volumetric_fog_albedo = Color(0.4351923, 0.43519226, 0.43519226, 1)
+volumetric_fog_anisotropy = 0.59
+adjustment_enabled = true
+adjustment_contrast = 1.25
 adjustment_saturation = 1.31
 
 [node name="Main" type="Node3D" unique_id=1074138897]
@@ -32,11 +37,12 @@ adjustment_saturation = 1.31
 environment = SubResource("Environment_c5lsl")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=886841073]
-transform = Transform3D(-4.3711385e-08, 0.7615383, -0.64811987, 0, 0.64811987, 0.7615383, 0.99999994, 3.3287897e-08, -2.833022e-08, 0, 0, 0)
-light_volumetric_fog_energy = 2.82
+transform = Transform3D(-4.3711385e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 0.99999994, 4.371139e-08, 1.9106855e-15, 0, 0, 0)
+light_volumetric_fog_energy = 2.404
 shadow_enabled = true
 shadow_opacity = 0.42
 shadow_blur = 0.487
+sky_mode = 1
 
 [node name="Player" parent="." unique_id=790875423 instance=ExtResource("2_0xm2m")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.059508264, 0.17126751)
@@ -59,23 +65,28 @@ footstep_ground_probe_distance = 0.3
 hover_color = Color(0.7285387, 0.33243695, 0.53048784, 0.050980393)
 target_color = Color(0.4284812, 0.27790415, 0.32941735, 0.6117647)
 highlight_emission = 0.005
-click_effect_color = Color(0.17897373, 0.0957414, 0.032924913, 1)
+click_effect_color = Color(0.82509154, 1.2680578, 1.2702514, 1)
 click_particle_count = 45
 
 [node name="Procedural Map" type="Node3D" parent="." unique_id=1594020206]
 transform = Transform3D(1, 0, 0, 0, 1, 1.4901161e-08, 0, 0, 1, 0, 0, 2.3841858e-07)
 script = ExtResource("7_5vw27")
-max_map_size = 200.0
-median_rooms = 20
-edge_margin = 6
+min_map_size = 120.0
+max_map_size = 240.0
+edge_margin = 8
 random_seed = 11670
 num_lava_sources = 4
 num_highground = 3
 depth_step_height = 0.25
 pixels_per_cell = 16
-blur_radius = 8
-heightmap_displacement_amplitude = 2.5
-heightmap_noise_displacement_strength = 0.25
+blur_radius = 10
+mesh_subdivisions = 24
+collision_subdivisions = 12
+heightmap_displacement_amplitude = 3.0
+heightmap_noise_displacement_strength = 0.09999999999999998
+wall_heightmap_blend_strength = 0.47
+wall_heightmap_blend_radius_cells = 1.55
+wall_heightmap_peak_offset_cells = 0.32
 export_heightmap_debug = true
 exploration_reveal_radius_cells = 4
 terrain_footprint_count = 32
@@ -85,14 +96,14 @@ terrain_footprint_overflow_fade_duration = 1.5
 terrain_footprint_strength = 0.47
 deepest_point_scene = ExtResource("3_7mycd")
 deepest_point_scene_height_offset = -0.3
-lava_height_level = 3.85
+lava_height_level = 2.35
 lava_surface_offset = 0.125
 lava_surface_min_margin_world = 100.0
-lava_material = ExtResource("10_lava_material")
 scatter_internal_walls = false
 debug_internal_walls = false
-show_grid_debug = false
-show_depth_labels = false
+heightmap_corner_dot_radius_pixels = 0.1
+heightmap_corner_dot_inset_cells = 0.01
+heightmap_corner_dot_color = Color(1.2390978, 1.2520355, 1.2649733, 0.6)
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=289701640]
 
