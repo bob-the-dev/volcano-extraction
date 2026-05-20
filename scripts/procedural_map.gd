@@ -16,6 +16,7 @@ const GENERATION_YIELD_ROW_INTERVAL: int = 4
 const GENERATION_YIELD_CELL_INTERVAL: int = 192
 const GENERATION_YIELD_GEOMETRY_INTERVAL: int = 24
 const GENERATION_YIELD_HEIGHTMAP_BLEND_INTERVAL: int = 32
+const GENERATION_NON_VISUAL_YIELD_MULTIPLIER: int = 16
 const RAW_ROOM_VISUALIZATION_DURATION_SECONDS: float = 0.3
 const ROOM_VISUALIZATION_DELAY_SECONDS: float = 0.16
 const ROOM_VISUALIZATION_BATCH_SIZE: int = 2
@@ -30,6 +31,8 @@ const WALL_PILLAR_CENTER_LEAN_MAX_DEGREES: float = 15.0
 const WALL_HEIGHTMAP_PEAK_RADIUS_RATIO: float = 0.42
 const WALL_HEIGHTMAP_PEAK_STRENGTH_RATIO: float = 0.82
 const WALL_HEIGHTMAP_BASE_STRENGTH_RATIO: float = 0.58
+const GENERATION_LOG_PATH: String = "res://procedural_generation.log"
+const HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH: String = "res://scripts/utils/HeightmapBlurHelper.cs"
 
 # Inner classes
 class Room:
@@ -112,6 +115,8 @@ class TerrainFootprint:
 @export var floor_height: float = 0.1
 @export var base_thickness: float = 1.0
 @export var regenerate_on_ready: bool = true
+## Enables loading-screen generation visualization snapshots and their intentional animation waits.
+@export var enable_loading_generation_visualization: bool = true
 
 @export_group("Materials")
 @export var solid_ground_material: StandardMaterial3D = preload("res://materials/solid_ground.tres"):
@@ -150,6 +155,8 @@ class TerrainFootprint:
 @export_range(0, 20) var blur_radius: int = 5
 ## Grid mesh subdivisions (vertices per cell, higher = smoother terrain)
 @export_range(1, 128) var mesh_subdivisions: int = 48
+## Hard cap for generated plane subdivisions per axis to keep terrain mesh creation bounded.
+@export_range(64, 2048, 16) var max_terrain_mesh_subdivisions_per_axis: int = 512
 ## Collision heightmap subdivisions per terrain cell. Lower values keep generation much cheaper than the visual mesh.
 @export_range(1, 12) var collision_subdivisions: int = 4
 ## Heightmap displacement multiplier (higher = more dramatic height differences)
@@ -334,12 +341,28 @@ var _default_lava_orb_material: ShaderMaterial = preload("res://shaders/psOneLav
 var _floating_deepest_point_nodes: Array[Node3D] = []
 var _floating_motion_time: float = 0.0
 var _terrain_shader_material: ShaderMaterial
+var _terrain_shader_slot_count: int = -1
+var _terrain_mesh_instance: MeshInstance3D
+var _terrain_plane_mesh: PlaneMesh
+var _terrain_static_body: StaticBody3D
+var _terrain_collision_shape_node: CollisionShape3D
 var _terrain_footprints: Array[TerrainFootprint] = []
 var _retiring_terrain_footprints: Array[TerrainFootprint] = []
 var _terrain_grid_rect: Rect2i = Rect2i(0, 0, 0, 0)
 var _terrain_world_rect: Rect2 = Rect2(Vector2.ZERO, Vector2.ZERO)
 var _terrain_collision_sample_width: int = 0
 var _terrain_collision_sample_depth: int = 0
+var _generation_log_lines: Array[String] = []
+var _generation_log_scope_starts_usec: Dictionary = {}
+var _generation_log_started_usec: int = 0
+var _generation_log_absolute_path: String = ""
+var _generation_log_write_failed: bool = false
+var _collision_heightmap_backend_logged: String = ""
+var _heightmap_detail_noise_backend_logged: String = ""
+var _wall_heightmap_blend_backend_logged: String = ""
+var _heightmap_blur_backend_logged: String = ""
+var _heightmap_csharp_fallback_warning_logged: bool = false
+var _heightmap_blur_helper: Object = null
 var _explored_cells: Dictionary = {}
 var _exploration_player: Node3D = null
 var _last_exploration_player_grid_key: String = ""
@@ -387,13 +410,26 @@ func _regenerate_map() -> void:
 		return
 	
 	_is_regenerating = true
+	_begin_generation_log("regenerate_map")
 	_sync_lava_height_state()
+	_begin_generation_scope("clear_map")
 	_clear_map()
+	_end_generation_scope("clear_map", "spawned_objects=%d" % [_spawned_objects.size()])
+	_begin_generation_scope("generate_map")
 	_generate_map()
+	_end_generation_scope("generate_map", "rooms=%d cells=%d" % [_rooms.size(), _cells.size()])
+	_begin_generation_scope("spawn_geometry")
 	_spawn_geometry()
+	_end_generation_scope("spawn_geometry", "floors=%d lava_sources=%d highground=%d" % [_floor_cells.size(), _lava_sources.size(), _highground_positions.size()])
+	_begin_generation_scope("spawn_deepest_point_scenes")
 	_spawn_deepest_point_scenes()
+	_end_generation_scope("spawn_deepest_point_scenes", "spawned=%d" % [_lava_sources.size()])
+	_begin_generation_scope("place_player_on_floor")
 	_place_player_on_floor()
+	_end_generation_scope("place_player_on_floor")
+	_begin_generation_scope("setup_exploration_tracking")
 	_setup_exploration_tracking()
+	_end_generation_scope("setup_exploration_tracking", "explored_cells=%d" % [_explored_cells.size()])
 	_finalize_regeneration()
 
 
@@ -403,69 +439,151 @@ func generate_map_with_loading() -> void:
 
 	var stage_count: int = 10
 	_is_regenerating = true
+	_begin_generation_log("generate_map_with_loading")
+	_append_generation_log_line("CONFIG", "loading_visualization=%s" % [str(enable_loading_generation_visualization)])
 	_initial_generation_lava_height_level = lava_height_level
 	_sync_lava_height_state()
 	_emit_generation_stage(1, stage_count, "Evicting Yesterday", "Sweeping out the last expedition before anyone trips over it.")
 	await get_tree().process_frame
+	_begin_generation_scope("clear_map")
 	_clear_map()
+	_end_generation_scope("clear_map", "spawned_objects=%d" % [_spawned_objects.size()])
 
 	_emit_generation_stage(2, stage_count, "Consulting The Volcano", "Reading tremors, static, and several deeply suspicious omens.")
 	await get_tree().process_frame
+	_begin_generation_scope("initialize_generation_state")
 	_initialize_generation_state()
+	_end_generation_scope("initialize_generation_state", "seed=%d map=%dx%d target_rooms=%d" % [random_seed, map_width, map_height, num_rooms])
 	_emit_generation_visualization_reset()
 
 	_emit_generation_stage(3, stage_count, "Sketching Escape Routes", "Dropping rooms where future panic will feel most cinematic.")
 	await get_tree().process_frame
+	_begin_generation_scope("generate_rooms")
 	await _generate_rooms_async()
+	_end_generation_scope("generate_rooms", "rooms=%d" % [_rooms.size()])
 
 	_emit_generation_stage(4, stage_count, "Stamping The Grid", "Turning wild crater dreams into tiles the boots can understand.")
 	await get_tree().process_frame
+	_begin_generation_scope("generate_cells")
 	await _generate_cells_async()
+	_end_generation_scope("generate_cells", "cells=%d" % [_cells.size()])
 
 	_emit_generation_stage(5, stage_count, "Teaching Rocks To Be Rude", "Marking walls in all the places your ankles would least appreciate.")
 	await get_tree().process_frame
+	_begin_generation_scope("mark_walls")
 	await _mark_walls_async()
+	_end_generation_scope("mark_walls", "walls=%d floors=%d" % [_wall_lookup.size(), _floor_lookup.size()])
+	_begin_generation_scope("wall_fill_visualization")
 	await _play_wall_fill_visualization_sequence()
+	_end_generation_scope("wall_fill_visualization")
 
 	_emit_generation_stage(6, stage_count, "Pouring In The Regret", "Letting lava settle into every low spot that looked remotely comfortable.")
 	await get_tree().process_frame
+	_begin_generation_scope("mark_lava")
 	await _mark_lava_async()
+	_end_generation_scope("mark_lava")
 
 	_emit_generation_stage(7, stage_count, "Extruding The Disaster", "Pulling cliffs, floors, and molten nonsense out of the ground.")
 	await get_tree().process_frame
+	_begin_generation_scope("spawn_geometry")
 	await _spawn_geometry_async()
+	_end_generation_scope("spawn_geometry", "floors=%d lava_sources=%d highground=%d" % [_floor_cells.size(), _lava_sources.size(), _highground_positions.size()])
 
 	_emit_generation_stage(8, stage_count, "Launching The Mascot", "Floating our roundest survivor into the danger zone.")
 	await get_tree().process_frame
+	_begin_generation_scope("spawn_deepest_point_scenes")
 	_spawn_deepest_point_scenes()
+	_end_generation_scope("spawn_deepest_point_scenes", "spawned=%d" % [_lava_sources.size()])
 
 	_emit_generation_stage(9, stage_count, "Dropping You Somewhere Legal", "Finding a tile that counts as safe enough for paperwork.")
 	await get_tree().process_frame
+	_begin_generation_scope("place_player_on_floor")
 	_place_player_on_floor()
+	_end_generation_scope("place_player_on_floor")
 
 	_emit_generation_stage(10, stage_count, "Teaching The Map To Gossip", "Preparing exploration tracking for every questionable decision ahead.")
 	await get_tree().process_frame
+	_begin_generation_scope("setup_exploration_tracking")
 	_setup_exploration_tracking()
+	_end_generation_scope("setup_exploration_tracking", "explored_cells=%d" % [_explored_cells.size()])
 	_emit_generation_visualization_complete()
 	_finalize_regeneration()
 
 
 func _emit_generation_stage(step_index: int, step_count: int, title: String, description: String) -> void:
+	_append_generation_log_line("STAGE", "%d/%d %s | %s" % [step_index, step_count, title, description])
 	generation_stage_changed.emit(step_index, step_count, title, description)
 
 
 func _emit_generation_visualization_reset() -> void:
+	if not _should_emit_generation_visualization():
+		return
 	generation_visualization_updated.emit({"phase": "reset"})
+
+
+func _should_emit_generation_visualization() -> bool:
+	return enable_loading_generation_visualization
+
+
+func _get_generation_yield_row_interval() -> int:
+	if _should_emit_generation_visualization():
+		return GENERATION_YIELD_ROW_INTERVAL
+	return GENERATION_YIELD_ROW_INTERVAL * GENERATION_NON_VISUAL_YIELD_MULTIPLIER
+
+
+func _get_generation_yield_cell_interval() -> int:
+	if _should_emit_generation_visualization():
+		return GENERATION_YIELD_CELL_INTERVAL
+	return GENERATION_YIELD_CELL_INTERVAL * GENERATION_NON_VISUAL_YIELD_MULTIPLIER
+
+
+func _get_generation_yield_geometry_interval() -> int:
+	if _should_emit_generation_visualization():
+		return GENERATION_YIELD_GEOMETRY_INTERVAL
+	return GENERATION_YIELD_GEOMETRY_INTERVAL * GENERATION_NON_VISUAL_YIELD_MULTIPLIER
+
+
+func _get_generation_yield_heightmap_blend_interval() -> int:
+	if _should_emit_generation_visualization():
+		return GENERATION_YIELD_HEIGHTMAP_BLEND_INTERVAL
+	return GENERATION_YIELD_HEIGHTMAP_BLEND_INTERVAL * GENERATION_NON_VISUAL_YIELD_MULTIPLIER
 
 
 func _finalize_regeneration() -> void:
 	_is_regenerating = false
+	var total_duration_usec: int = Time.get_ticks_usec() - _generation_log_started_usec
+	_append_generation_log_line(
+		"DONE",
+		"Generation finished in %s | rooms=%d cells=%d floors=%d" % [
+			_format_generation_duration(total_duration_usec),
+			_rooms.size(),
+			_cells.size(),
+			_floor_cells.size()
+		]
+	)
 
 	print("Map generated: ", _rooms.size(), " rooms, ", _cells.size(), " cells")
 	print("  - Floors: ", _floor_cells.size())
+	if export_heightmap_debug:
+		call_deferred("_export_heightmap_debug_images")
 
 	# Emit signal for other systems (like pathfinding) to update
 	map_regenerated.emit()
+
+
+func _export_heightmap_debug_images() -> void:
+	if not export_heightmap_debug:
+		return
+
+	if _heightmap_image != null:
+		var heightmap_save_path: String = "res://debug_heightmap.png"
+		_heightmap_image.save_png(heightmap_save_path)
+		print("[Heightmap] Saved debug texture to ", heightmap_save_path)
+
+	if _wall_heightmap_image != null:
+		var wall_heightmap_save_path: String = "res://debug_wall_heightmap.png"
+		_wall_heightmap_image.save_png(wall_heightmap_save_path)
+		print("[Heightmap] Saved wall mask debug texture to ", wall_heightmap_save_path)
 
 
 ## Clears all spawned geometry.
@@ -474,7 +592,7 @@ func _clear_map() -> void:
 		if is_instance_valid(obj):
 			obj.queue_free()
 	_spawned_objects.clear()
-	_terrain_shader_material = null
+	_reset_persistent_terrain_nodes()
 	_terrain_footprints.clear()
 	_retiring_terrain_footprints.clear()
 	_terrain_grid_rect = Rect2i(0, 0, 0, 0)
@@ -499,6 +617,35 @@ func _clear_map() -> void:
 	_debug_heightmap_overlay_texture = null
 	_wall_heightmap_texture = null
 	_wall_heightmap_image = null
+
+
+func _reset_persistent_terrain_nodes() -> void:
+	if _terrain_mesh_instance != null and is_instance_valid(_terrain_mesh_instance):
+		_terrain_mesh_instance.visible = false
+		_terrain_mesh_instance.material_override = null
+
+	if _terrain_collision_shape_node != null and is_instance_valid(_terrain_collision_shape_node):
+		_terrain_collision_shape_node.disabled = true
+		_terrain_collision_shape_node.shape = null
+		_terrain_collision_shape_node.position = Vector3.ZERO
+		_terrain_collision_shape_node.scale = Vector3.ONE
+
+	if _terrain_static_body != null and is_instance_valid(_terrain_static_body):
+		_terrain_static_body.position = Vector3.ZERO
+
+
+func _free_persistent_terrain_nodes() -> void:
+	if _terrain_mesh_instance != null and is_instance_valid(_terrain_mesh_instance):
+		_terrain_mesh_instance.queue_free()
+	if _terrain_static_body != null and is_instance_valid(_terrain_static_body):
+		_terrain_static_body.queue_free()
+
+	_terrain_mesh_instance = null
+	_terrain_plane_mesh = null
+	_terrain_static_body = null
+	_terrain_collision_shape_node = null
+	_terrain_shader_material = null
+	_terrain_shader_slot_count = -1
 
 
 ## Main map generation algorithm (ported from TypeScript).
@@ -542,6 +689,7 @@ func _initialize_generation_state() -> void:
 	num_rooms = int(round((map_area / base_area) * median_rooms))
 	num_rooms = maxi(num_rooms, 3)  # Ensure at least 3 rooms
 	
+	_append_generation_log_line("STATE", "seed=%d map=%dx%d area=%d target_rooms=%d" % [random_seed, map_width, map_height, map_area, num_rooms])
 	print("Generated map size: ", map_width, "x", map_height, " (area: ", map_area, ") with ", num_rooms, " rooms")
 
 
@@ -610,8 +758,9 @@ func _generate_rooms_async() -> void:
 	var attempts: int = 0
 	var pending_room_indices: Array[int] = []
 
-	_emit_room_visualization_snapshot([], 0.0)
-	await get_tree().process_frame
+	if _should_emit_generation_visualization():
+		_emit_room_visualization_snapshot([], 0.0)
+		await get_tree().process_frame
 
 	while _rooms.size() < num_rooms and attempts < 1000:
 		var added_room: bool = false
@@ -701,6 +850,7 @@ func _generate_cells() -> void:
 func _generate_cells_async() -> void:
 	var w: int = int(floor(map_width / cell_size)) - (edge_margin * 2)
 	var h: int = int(floor(map_height / cell_size)) - (edge_margin * 2)
+	var row_yield_interval: int = _get_generation_yield_row_interval()
 	await _rebuild_room_floor_lookup_async()
 
 	for j in range(h):
@@ -718,13 +868,14 @@ func _generate_cells_async() -> void:
 			cell.noise_value = n
 			_cells.append(cell)
 
-		if (j + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+		if (j + 1) % row_yield_interval == 0:
 			await get_tree().process_frame
 
 	_rebuild_cell_lookup()
 	_rebuild_surface_lookups()
-	_emit_cell_outline_visualization_snapshot()
-	await get_tree().process_frame
+	if _should_emit_generation_visualization():
+		_emit_cell_outline_visualization_snapshot()
+		await get_tree().process_frame
 
 
 ## Marks cells as walls if adjacent to floors.
@@ -800,6 +951,7 @@ func _mark_walls() -> void:
 
 
 func _mark_walls_async() -> void:
+	var cell_yield_interval: int = _get_generation_yield_cell_interval()
 	var processed_cell_count: int = 0
 	for cell in _cells:
 		if cell.is_floor:
@@ -808,7 +960,7 @@ func _mark_walls_async() -> void:
 			cell.is_wall = _has_neighbours(cell, "is_floor", 2.5)
 
 		processed_cell_count += 1
-		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+		if processed_cell_count % cell_yield_interval == 0:
 			await get_tree().process_frame
 
 	if not scatter_internal_walls or _noise == null:
@@ -859,7 +1011,7 @@ func _mark_walls_async() -> void:
 		converted_count += 1
 
 		processed_cell_count += 1
-		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+		if processed_cell_count % cell_yield_interval == 0:
 			await get_tree().process_frame
 
 	if min_noise_sample == INF:
@@ -888,20 +1040,24 @@ func _mark_lava() -> void:
 
 
 func _mark_lava_async() -> void:
+	var cell_yield_interval: int = _get_generation_yield_cell_interval()
 	var processed_cell_count: int = 0
 	for cell in _cells:
 		cell.filled = cell.is_floor or cell.is_wall
 		processed_cell_count += 1
-		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+		if processed_cell_count % cell_yield_interval == 0:
 			await get_tree().process_frame
 
 
 ## Spawns visual geometry for cells.
 func _spawn_geometry() -> void:
 	# Select depth sources (lava sources and highground)
+	_begin_generation_scope("geometry.select_depth_sources")
 	_select_depth_sources()
+	_end_generation_scope("geometry.select_depth_sources", "lava_sources=%d highground=%d" % [_lava_sources.size(), _highground_positions.size()])
 	
 	# Calculate depths for all cells
+	_begin_generation_scope("geometry.calculate_depths")
 	print("[Map] Calculating terrain depths...")
 	for cell in _cells:
 		if cell.is_wall:
@@ -911,8 +1067,10 @@ func _spawn_geometry() -> void:
 			# Floor and lava cells get calculated depth
 			var distance: float = _distance_to_nearest_wall(cell.position)
 			cell.depth = _calculate_tile_depth(cell.position, distance, cell.noise_value)
+	_end_generation_scope("geometry.calculate_depths", "cells=%d" % [_cells.size()])
 	
 	# Override depth for special source cells
+	_begin_generation_scope("geometry.apply_source_overrides")
 	for lava_pos in _lava_sources:
 		var lava_cell: Cell = _get_cell_at(lava_pos)
 		if lava_cell:
@@ -928,24 +1086,38 @@ func _spawn_geometry() -> void:
 			print("[Map] Highground at grid ", high_pos, " set to depth 0")
 		else:
 			push_warning("[Map] Failed to find cell for highground at grid ", high_pos)
+	_end_generation_scope("geometry.apply_source_overrides")
 	
 	# Spawn custom base mesh that follows map outline
+	_begin_generation_scope("geometry.spawn_base_mesh")
 	_spawn_base_mesh()
+	_end_generation_scope("geometry.spawn_base_mesh")
+	_begin_generation_scope("geometry.spawn_lava_volume")
 	_spawn_lava_volume()
+	_end_generation_scope("geometry.spawn_lava_volume")
+	_begin_generation_scope("geometry.spawn_lava_orbs")
 	_spawn_lava_orbs()
+	_end_generation_scope("geometry.spawn_lava_orbs")
 	
+	_begin_generation_scope("geometry.collect_floor_cells")
 	for cell in _cells:
 		if cell.is_wall:
 			continue
 		elif cell.is_floor:
 			# All non-wall floor cells remain walkable; lava danger is derived from depth and live lava height.
 			_floor_cells.append(cell)
+	_end_generation_scope("geometry.collect_floor_cells", "floors=%d" % [_floor_cells.size()])
 
 
 func _spawn_geometry_async() -> void:
+	var cell_yield_interval: int = _get_generation_yield_cell_interval()
+	var geometry_yield_interval: int = _get_generation_yield_geometry_interval()
+	_begin_generation_scope("geometry.select_depth_sources")
 	_select_depth_sources()
+	_end_generation_scope("geometry.select_depth_sources", "lava_sources=%d highground=%d" % [_lava_sources.size(), _highground_positions.size()])
 
 	print("[Map] Calculating terrain depths...")
+	_begin_generation_scope("geometry.calculate_depths")
 	var processed_cell_count: int = 0
 	for cell in _cells:
 		if cell.is_wall:
@@ -955,9 +1127,11 @@ func _spawn_geometry_async() -> void:
 			cell.depth = _calculate_tile_depth(cell.position, distance, cell.noise_value)
 
 		processed_cell_count += 1
-		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+		if processed_cell_count % cell_yield_interval == 0:
 			await get_tree().process_frame
+	_end_generation_scope("geometry.calculate_depths", "cells=%d" % [_cells.size()])
 
+	_begin_generation_scope("geometry.apply_source_overrides")
 	for lava_pos in _lava_sources:
 		var lava_cell: Cell = _get_cell_at(lava_pos)
 		if lava_cell:
@@ -973,17 +1147,26 @@ func _spawn_geometry_async() -> void:
 			print("[Map] Highground at grid ", high_pos, " set to depth 0")
 		else:
 			push_warning("[Map] Failed to find cell for highground at grid ", high_pos)
+	_end_generation_scope("geometry.apply_source_overrides")
 
-	_emit_depth_fill_visualization_snapshot(FLOOR_FILL_VISUALIZATION_DURATION_SECONDS)
-	await get_tree().create_timer(FLOOR_FILL_VISUALIZATION_DURATION_SECONDS).timeout
-	_emit_lava_tint_visualization_snapshot(LAVA_TINT_VISUALIZATION_DURATION_SECONDS)
-	await get_tree().create_timer(LAVA_TINT_VISUALIZATION_DURATION_SECONDS).timeout
+	if _should_emit_generation_visualization():
+		_emit_depth_fill_visualization_snapshot(FLOOR_FILL_VISUALIZATION_DURATION_SECONDS)
+		await get_tree().create_timer(FLOOR_FILL_VISUALIZATION_DURATION_SECONDS).timeout
+		_emit_lava_tint_visualization_snapshot(LAVA_TINT_VISUALIZATION_DURATION_SECONDS)
+		await get_tree().create_timer(LAVA_TINT_VISUALIZATION_DURATION_SECONDS).timeout
 
+	_begin_generation_scope("geometry.spawn_base_mesh")
 	await _spawn_base_mesh_async()
+	_end_generation_scope("geometry.spawn_base_mesh")
+	_begin_generation_scope("geometry.spawn_lava_volume")
 	_spawn_lava_volume()
+	_end_generation_scope("geometry.spawn_lava_volume")
+	_begin_generation_scope("geometry.spawn_lava_orbs")
 	_spawn_lava_orbs()
+	_end_generation_scope("geometry.spawn_lava_orbs")
 	await get_tree().process_frame
 
+	_begin_generation_scope("geometry.collect_floor_cells")
 	var geometry_work_units: int = 0
 	for cell in _cells:
 		if cell.is_wall:
@@ -992,9 +1175,10 @@ func _spawn_geometry_async() -> void:
 			_floor_cells.append(cell)
 			geometry_work_units += 1
 
-		if geometry_work_units >= GENERATION_YIELD_GEOMETRY_INTERVAL:
+		if geometry_work_units >= geometry_yield_interval:
 			geometry_work_units = 0
 			await get_tree().process_frame
+	_end_generation_scope("geometry.collect_floor_cells", "floors=%d" % [_floor_cells.size()])
 
 ## Returns the normalized noise value used to decide whether a floor cell becomes an internal wall.
 func _get_internal_wall_noise(grid_pos: Vector2) -> float:
@@ -1150,7 +1334,9 @@ func _spawn_base_mesh() -> void:
 		return
 	
 	# Collect all cells that should have base underneath, including the synthetic perimeter ring.
+	_begin_generation_scope("base_mesh.build_base_cells")
 	var base_cells: Array[Cell] = _build_terrain_base_cells()
+	_end_generation_scope("base_mesh.build_base_cells", "base_cells=%d" % [base_cells.size()])
 	
 	if base_cells.is_empty():
 		return
@@ -1158,8 +1344,12 @@ func _spawn_base_mesh() -> void:
 	print("[Heightmap Terrain] Generating heightmap texture...")
 	
 	# Step 1: Generate heightmap texture from cell depths
+	_begin_generation_scope("base_mesh.generate_heightmap_texture")
 	_heightmap_texture = _generate_heightmap_texture(base_cells)
+	_end_generation_scope("base_mesh.generate_heightmap_texture")
+	_begin_generation_scope("base_mesh.generate_wall_heightmap_texture")
 	_wall_heightmap_texture = _generate_wall_heightmap_texture(base_cells)
+	_end_generation_scope("base_mesh.generate_wall_heightmap_texture")
 	
 	if not _heightmap_texture:
 		print("[Heightmap Terrain] ERROR: Failed to generate heightmap texture")
@@ -1167,7 +1357,9 @@ func _spawn_base_mesh() -> void:
 	if not _wall_heightmap_texture:
 		print("[Heightmap Terrain] ERROR: Failed to generate wall heightmap texture")
 		return
+	_begin_generation_scope("base_mesh.create_and_add_terrain_mesh")
 	_create_and_add_terrain_mesh()
+	_end_generation_scope("base_mesh.create_and_add_terrain_mesh")
 
 
 func _spawn_base_mesh_async() -> void:
@@ -1175,13 +1367,19 @@ func _spawn_base_mesh_async() -> void:
 		_spawn_base_mesh_flat()
 		return
 
+	_begin_generation_scope("base_mesh.build_base_cells")
 	var base_cells: Array[Cell] = _build_terrain_base_cells()
+	_end_generation_scope("base_mesh.build_base_cells", "base_cells=%d" % [base_cells.size()])
 	if base_cells.is_empty():
 		return
 
 	print("[Heightmap Terrain] Generating heightmap texture...")
+	_begin_generation_scope("base_mesh.generate_heightmap_texture")
 	_heightmap_texture = await _generate_heightmap_texture_async(base_cells)
+	_end_generation_scope("base_mesh.generate_heightmap_texture")
+	_begin_generation_scope("base_mesh.generate_wall_heightmap_texture")
 	_wall_heightmap_texture = await _generate_wall_heightmap_texture_async(base_cells)
+	_end_generation_scope("base_mesh.generate_wall_heightmap_texture")
 	if not _heightmap_texture:
 		print("[Heightmap Terrain] ERROR: Failed to generate heightmap texture")
 		return
@@ -1189,14 +1387,20 @@ func _spawn_base_mesh_async() -> void:
 		print("[Heightmap Terrain] ERROR: Failed to generate wall heightmap texture")
 		return
 
+	_begin_generation_scope("base_mesh.create_and_add_terrain_mesh")
 	_create_and_add_terrain_mesh()
+	_end_generation_scope("base_mesh.create_and_add_terrain_mesh")
 
 
 func _create_and_add_terrain_mesh() -> void:
+	_begin_generation_scope("terrain_mesh.create_mesh_instance")
 	var mesh_instance: MeshInstance3D = _create_terrain_mesh()
+	_end_generation_scope("terrain_mesh.create_mesh_instance")
 	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 
+	_begin_generation_scope("terrain_mesh.create_shader_material")
 	var terrain_shader: ShaderMaterial = _create_terrain_displacement_material()
+	_end_generation_scope("terrain_mesh.create_shader_material")
 	_terrain_shader_material = terrain_shader
 	mesh_instance.material_override = terrain_shader
 	_sync_ground_surface_material_parameters(true)
@@ -1205,16 +1409,21 @@ func _create_and_add_terrain_mesh() -> void:
 	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
 	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
 
-	var static_body: StaticBody3D = StaticBody3D.new()
-	var collision_shape: CollisionShape3D = CollisionShape3D.new()
+	var static_body: StaticBody3D = _get_or_create_terrain_static_body()
+	var collision_shape: CollisionShape3D = _get_or_create_terrain_collision_shape_node()
+	_begin_generation_scope("terrain_mesh.create_collision_shape")
 	var terrain_collision_shape: Shape3D = _create_terrain_collision_shape(
 		terrain_world_rect.size.x,
 		terrain_world_rect.size.y,
 		terrain_grid_rect.size.x,
 		terrain_grid_rect.size.y
 	)
+	_end_generation_scope("terrain_mesh.create_collision_shape")
 	if terrain_collision_shape:
 		collision_shape.shape = terrain_collision_shape
+		collision_shape.disabled = false
+		collision_shape.position = Vector3.ZERO
+		collision_shape.scale = Vector3.ONE
 		if _terrain_collision_sample_width > 1 and _terrain_collision_sample_depth > 1:
 			collision_shape.scale = _get_terrain_collision_shape_scale(terrain_world_rect.size.x, terrain_world_rect.size.y)
 	else:
@@ -1222,21 +1431,107 @@ func _create_and_add_terrain_mesh() -> void:
 		var box_shape: BoxShape3D = BoxShape3D.new()
 		box_shape.size = Vector3(terrain_world_rect.size.x, 0.2, terrain_world_rect.size.y)
 		collision_shape.shape = box_shape
+		collision_shape.disabled = false
 		collision_shape.position = Vector3(0, max_displacement, 0)
+		collision_shape.scale = Vector3.ONE
 		push_warning("[Heightmap Terrain] Falling back to flat collision because terrain collision generation failed")
 
-	static_body.add_child(collision_shape)
 	static_body.position = mesh_instance.position
-	static_body.add_to_group("base_platform")
 
-	add_child(static_body)
-	add_child(mesh_instance)
-	_spawned_objects.append(static_body)
-	_spawned_objects.append(mesh_instance)
+	_begin_generation_scope("terrain_mesh.add_nodes")
+	if collision_shape.get_parent() != static_body:
+		static_body.add_child(collision_shape)
+	if static_body.get_parent() != self:
+		add_child(static_body)
+	if mesh_instance.get_parent() != self:
+		add_child(mesh_instance)
+	mesh_instance.visible = true
+	_end_generation_scope("terrain_mesh.add_nodes")
 
 	print("[Heightmap Terrain] Terrain collision anchored to mesh base Y: ", mesh_instance.position.y)
 	print("[Heightmap Terrain] Terrain mesh with terrain-following collision added to scene")
 	print("[Heightmap Terrain] Created terrain mesh with heightmap texture")
+
+
+func _begin_generation_log(mode: String) -> void:
+	_generation_log_lines.clear()
+	_generation_log_scope_starts_usec.clear()
+	_generation_log_started_usec = Time.get_ticks_usec()
+	_generation_log_absolute_path = ProjectSettings.globalize_path(GENERATION_LOG_PATH)
+	_generation_log_write_failed = false
+	_collision_heightmap_backend_logged = ""
+	_heightmap_detail_noise_backend_logged = ""
+	_wall_heightmap_blend_backend_logged = ""
+	_heightmap_blur_backend_logged = ""
+	_heightmap_csharp_fallback_warning_logged = false
+	_append_generation_log_line("START", "Generation started via %s" % mode)
+	_append_generation_log_line("PATH", _generation_log_absolute_path)
+
+
+func _begin_generation_scope(scope_name: String) -> void:
+	_generation_log_scope_starts_usec[scope_name] = Time.get_ticks_usec()
+	_append_generation_log_line("BEGIN", scope_name)
+
+
+func _end_generation_scope(scope_name: String, details: String = "") -> void:
+	if not _generation_log_scope_starts_usec.has(scope_name):
+		_append_generation_log_line("WARN", "Missing start for scope %s" % scope_name)
+		return
+
+	var started_usec: int = int(_generation_log_scope_starts_usec.get(scope_name, Time.get_ticks_usec()))
+	_generation_log_scope_starts_usec.erase(scope_name)
+	var duration_usec: int = Time.get_ticks_usec() - started_usec
+	var message: String = "%s completed in %s" % [scope_name, _format_generation_duration(duration_usec)]
+	if not details.is_empty():
+		message += " | %s" % details
+	_append_generation_log_line("END", message)
+
+
+func _append_generation_log_line(kind: String, message: String) -> void:
+	if _generation_log_started_usec <= 0:
+		return
+
+	var elapsed_usec: int = Time.get_ticks_usec() - _generation_log_started_usec
+	var line: String = "%s | +%s | %s | %s" % [
+		_get_generation_timestamp_string(),
+		_format_generation_duration(elapsed_usec),
+		kind,
+		message
+	]
+	_generation_log_lines.append(line)
+	_write_generation_log_to_disk()
+
+
+func _write_generation_log_to_disk() -> void:
+	if _generation_log_write_failed:
+		return
+
+	var file: FileAccess = FileAccess.open(GENERATION_LOG_PATH, FileAccess.WRITE)
+	if file == null:
+		_generation_log_write_failed = true
+		push_warning("[Generation Log] Failed to open %s for writing" % _generation_log_absolute_path)
+		return
+
+	var content: String = "\n".join(_generation_log_lines)
+	if not content.is_empty():
+		content += "\n"
+	file.store_string(content)
+
+
+func _get_generation_timestamp_string() -> String:
+	var now: Dictionary = Time.get_datetime_dict_from_system()
+	return "%04d-%02d-%02d %02d:%02d:%02d" % [
+		int(now.get("year", 0)),
+		int(now.get("month", 0)),
+		int(now.get("day", 0)),
+		int(now.get("hour", 0)),
+		int(now.get("minute", 0)),
+		int(now.get("second", 0))
+	]
+
+
+func _format_generation_duration(duration_usec: int) -> String:
+	return "%.3f ms" % (float(duration_usec) / 1000.0)
 
 
 func _get_terrain_collision_shape_scale(playable_width: float, playable_height: float) -> Vector3:
@@ -2098,6 +2393,7 @@ func _create_terrain_collision_shape(_playable_width: float, _playable_height: f
 	var base_displacement_amplitude: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
 	var wall_displacement_amplitude: float = wall_heightmap_extra_height
 	var total_displacement_amplitude: float = base_displacement_amplitude + wall_displacement_amplitude
+	_begin_generation_scope("terrain_mesh.build_collision_heightmap_image")
 	var collision_image: Image = _build_collision_heightmap_image(
 		_heightmap_image,
 		_wall_heightmap_image,
@@ -2106,8 +2402,11 @@ func _create_terrain_collision_shape(_playable_width: float, _playable_height: f
 		base_displacement_amplitude,
 		wall_displacement_amplitude
 	)
+	_end_generation_scope("terrain_mesh.build_collision_heightmap_image", "samples=%dx%d" % [sample_width, sample_depth])
 	var shape: HeightMapShape3D = HeightMapShape3D.new()
+	_begin_generation_scope("terrain_mesh.update_collision_map_data")
 	shape.update_map_data_from_image(collision_image, 0.0, total_displacement_amplitude)
+	_end_generation_scope("terrain_mesh.update_collision_map_data", "samples=%dx%d" % [sample_width, sample_depth])
 	_terrain_collision_sample_width = sample_width
 	_terrain_collision_sample_depth = sample_depth
 
@@ -2116,6 +2415,18 @@ func _create_terrain_collision_shape(_playable_width: float, _playable_height: f
 
 
 func _build_collision_heightmap_image(source_image: Image, wall_image: Image, sample_width: int, sample_depth: int, base_amplitude: float, wall_amplitude: float) -> Image:
+	var csharp_collision_image: Image = _try_build_csharp_collision_heightmap_image(
+		source_image,
+		wall_image,
+		sample_width,
+		sample_depth,
+		base_amplitude,
+		wall_amplitude
+	)
+	if csharp_collision_image != null:
+		return csharp_collision_image
+	_note_collision_heightmap_backend("gdscript")
+
 	var collision_image: Image = Image.create(sample_width, sample_depth, false, Image.FORMAT_RF)
 	var total_amplitude: float = maxf(base_amplitude + wall_amplitude, 0.0001)
 	for z_index in range(sample_depth):
@@ -2176,6 +2487,202 @@ func _get_heightmap_detail_noise(world_x: float, world_z: float) -> float:
 	return detail_noise * heightmap_noise_displacement_strength
 
 
+func _get_heightmap_inner_blur_bounds(image_width: int, image_height: int) -> Rect2i:
+	if image_width <= 0 or image_height <= 0:
+		return Rect2i(0, 0, 0, 0)
+
+	var perimeter_pixels: int = maxi(terrain_perimeter_cells, 0) * pixels_per_cell
+	if perimeter_pixels <= 0:
+		return Rect2i(0, 0, image_width, image_height)
+
+	var inner_width: int = image_width - (perimeter_pixels * 2)
+	var inner_height: int = image_height - (perimeter_pixels * 2)
+	if inner_width <= 0 or inner_height <= 0:
+		return Rect2i(0, 0, image_width, image_height)
+
+	return Rect2i(perimeter_pixels, perimeter_pixels, inner_width, inner_height)
+
+
+func _get_heightmap_blur_helper() -> Object:
+	if _heightmap_blur_helper != null and is_instance_valid(_heightmap_blur_helper):
+		return _heightmap_blur_helper
+
+	var helper_script: Script = load(HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH)
+	if helper_script == null:
+		return null
+	if not helper_script.can_instantiate():
+		return null
+
+	var helper_instance: Object = helper_script.new()
+	if helper_instance == null:
+		return null
+	_heightmap_blur_helper = helper_instance
+	return _heightmap_blur_helper
+
+
+func _note_heightmap_blur_backend(backend_name: String) -> void:
+	if _heightmap_blur_backend_logged == backend_name:
+		return
+
+	_heightmap_blur_backend_logged = backend_name
+	_append_generation_log_line("INFO", "heightmap.blur_backend=%s" % backend_name)
+
+
+func _note_collision_heightmap_backend(backend_name: String) -> void:
+	if _collision_heightmap_backend_logged == backend_name:
+		return
+
+	_collision_heightmap_backend_logged = backend_name
+	_append_generation_log_line("INFO", "terrain.collision_heightmap_backend=%s" % backend_name)
+
+
+func _note_heightmap_detail_noise_backend(backend_name: String) -> void:
+	if _heightmap_detail_noise_backend_logged == backend_name:
+		return
+
+	_heightmap_detail_noise_backend_logged = backend_name
+	_append_generation_log_line("INFO", "heightmap.detail_noise_backend=%s" % backend_name)
+
+
+func _note_wall_heightmap_blend_backend(backend_name: String) -> void:
+	if _wall_heightmap_blend_backend_logged == backend_name:
+		return
+
+	_wall_heightmap_blend_backend_logged = backend_name
+	_append_generation_log_line("INFO", "wall_heightmap.blend_backend=%s" % backend_name)
+
+
+func _warn_heightmap_csharp_fallback_once(reason: String) -> void:
+	if _heightmap_csharp_fallback_warning_logged:
+		return
+
+	_heightmap_csharp_fallback_warning_logged = true
+	push_warning("[Heightmap] Falling back to GDScript processing: %s" % reason)
+	_append_generation_log_line("WARN", "heightmap.csharp_fallback=%s" % reason)
+
+
+func _try_apply_csharp_heightmap_detail_noise(source_image: Image, terrain_grid_rect: Rect2i) -> Image:
+	var blur_helper: Object = _get_heightmap_blur_helper()
+	if blur_helper == null:
+		_warn_heightmap_csharp_fallback_once("failed to instantiate C# helper from %s" % HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH)
+		return null
+	if not blur_helper.has_method("ApplyDetailNoiseRf"):
+		_warn_heightmap_csharp_fallback_once("C# helper is missing ApplyDetailNoiseRf")
+		return null
+
+	var detail_noised_image_variant: Variant = blur_helper.call(
+		"ApplyDetailNoiseRf",
+		source_image,
+		_noise,
+		terrain_grid_rect,
+		pixels_per_cell,
+		cell_size,
+		edge_margin,
+		heightmap_noise_displacement_strength,
+		HEIGHTMAP_DETAIL_NOISE_WORLD_SCALE
+	)
+	if detail_noised_image_variant is Image:
+		_note_heightmap_detail_noise_backend("csharp")
+		return detail_noised_image_variant as Image
+
+	_warn_heightmap_csharp_fallback_once("C# helper returned an unexpected result from ApplyDetailNoiseRf")
+	return null
+
+
+func _build_wall_heightmap_stamp_data(cells: Array[Cell], terrain_grid_rect: Rect2i) -> Array[Vector3]:
+	var stamp_data: Array[Vector3] = []
+	var min_height_ratio: float = clampf(wall_heightmap_noise_min_height_ratio, 0.0, 1.0)
+	for cell in cells:
+		if not cell.is_wall:
+			continue
+
+		var cell_center_x: float = (float(int(cell.position.x) - terrain_grid_rect.position.x) * float(pixels_per_cell)) + (float(pixels_per_cell) * 0.5)
+		var cell_center_y: float = (float(int(cell.position.y) - terrain_grid_rect.position.y) * float(pixels_per_cell)) + (float(pixels_per_cell) * 0.5)
+		var height_variation_ratio: float = lerpf(
+			min_height_ratio,
+			1.0,
+			clampf(cell.noise_value, 0.0, 1.0)
+		)
+		stamp_data.append(Vector3(cell_center_x, cell_center_y, height_variation_ratio))
+
+	return stamp_data
+
+
+func _try_apply_csharp_wall_heightmap_blend(image: Image, wall_stamp_data: Array[Vector3]) -> Image:
+	var blur_helper: Object = _get_heightmap_blur_helper()
+	if blur_helper == null:
+		_warn_heightmap_csharp_fallback_once("failed to instantiate C# helper from %s" % HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH)
+		return null
+	if not blur_helper.has_method("ApplyWallHeightmapBlendRf"):
+		_warn_heightmap_csharp_fallback_once("C# helper is missing ApplyWallHeightmapBlendRf")
+		return null
+
+	var base_radius_pixels: float = maxf(wall_heightmap_blend_radius_cells * float(pixels_per_cell), 1.0)
+	var peak_radius_pixels: float = maxf(base_radius_pixels * WALL_HEIGHTMAP_PEAK_RADIUS_RATIO, 1.0)
+	var peak_offset_pixels: float = wall_heightmap_peak_offset_cells * float(pixels_per_cell)
+	var blend_image_variant: Variant = blur_helper.call(
+		"ApplyWallHeightmapBlendRf",
+		image,
+		wall_stamp_data,
+		base_radius_pixels,
+		peak_radius_pixels,
+		peak_offset_pixels,
+		wall_heightmap_blend_strength * WALL_HEIGHTMAP_BASE_STRENGTH_RATIO,
+		wall_heightmap_blend_strength * WALL_HEIGHTMAP_PEAK_STRENGTH_RATIO
+	)
+	if blend_image_variant is Image:
+		_note_wall_heightmap_blend_backend("csharp")
+		return blend_image_variant as Image
+
+	_warn_heightmap_csharp_fallback_once("C# helper returned an unexpected result from ApplyWallHeightmapBlendRf")
+	return null
+
+
+func _try_apply_csharp_gaussian_blur(source_image: Image, radius: int, blur_bounds: Rect2i) -> Image:
+	var blur_helper: Object = _get_heightmap_blur_helper()
+	if blur_helper == null:
+		_warn_heightmap_csharp_fallback_once("failed to instantiate C# helper from %s" % HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH)
+		return null
+	if not blur_helper.has_method("ApplyGaussianBlurRf"):
+		_warn_heightmap_csharp_fallback_once("C# helper is missing ApplyGaussianBlurRf")
+		return null
+
+	var blurred_image_variant: Variant = blur_helper.call("ApplyGaussianBlurRf", source_image, radius, blur_bounds)
+	if blurred_image_variant is Image:
+		_note_heightmap_blur_backend("csharp")
+		return blurred_image_variant as Image
+
+	_warn_heightmap_csharp_fallback_once("C# helper returned an unexpected result from ApplyGaussianBlurRf")
+
+	return null
+
+
+func _try_build_csharp_collision_heightmap_image(source_image: Image, wall_image: Image, sample_width: int, sample_depth: int, base_amplitude: float, wall_amplitude: float) -> Image:
+	var blur_helper: Object = _get_heightmap_blur_helper()
+	if blur_helper == null:
+		_warn_heightmap_csharp_fallback_once("failed to instantiate C# helper from %s" % HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH)
+		return null
+	if not blur_helper.has_method("BuildCollisionHeightmapImageRf"):
+		_warn_heightmap_csharp_fallback_once("C# helper is missing BuildCollisionHeightmapImageRf")
+		return null
+
+	var collision_image_variant: Variant = blur_helper.call(
+		"BuildCollisionHeightmapImageRf",
+		source_image,
+		wall_image,
+		sample_width,
+		sample_depth,
+		base_amplitude,
+		wall_amplitude
+	)
+	if collision_image_variant is Image:
+		_note_collision_heightmap_backend("csharp")
+		return collision_image_variant as Image
+
+	_warn_heightmap_csharp_fallback_once("C# helper returned an unexpected result from BuildCollisionHeightmapImageRf")
+	return null
+
+
 ## Generates a heightmap texture from cell depth data
 func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
@@ -2217,15 +2724,9 @@ func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	# Apply Gaussian blur for smooth transitions
 	if blur_radius > 0:
 		print("[Heightmap] Applying Gaussian blur with radius ", blur_radius)
-		image = _apply_gaussian_blur(image, blur_radius)
+		image = _apply_gaussian_blur(image, blur_radius, _get_heightmap_inner_blur_bounds(tex_width, tex_height))
 
 	_enforce_outer_terrain_perimeter_depth(image, cells, terrain_grid_rect)
-	
-	# Debug: Save heightmap texture to file
-	if export_heightmap_debug:
-		var save_path: String = "res://debug_heightmap.png"
-		image.save_png(save_path)
-		print("[Heightmap] Saved debug texture to ", save_path)
 	
 	# Debug: Print depth distribution
 	var depth_counts: Array[int] = [0, 0, 0, 0, 0]
@@ -2256,11 +2757,6 @@ func _generate_wall_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	image = _apply_wall_heightmap_blend(image, cells, terrain_grid_rect)
 	_wall_heightmap_image = image
 
-	if export_heightmap_debug:
-		var save_path: String = "res://debug_wall_heightmap.png"
-		image.save_png(save_path)
-		print("[Heightmap] Saved wall mask debug texture to ", save_path)
-
 	return ImageTexture.create_from_image(image)
 
 
@@ -2270,12 +2766,14 @@ func _generate_heightmap_texture_async(cells: Array[Cell]) -> ImageTexture:
 	var grid_height: int = terrain_grid_rect.size.y
 	var tex_width: int = grid_width * pixels_per_cell
 	var tex_height: int = grid_height * pixels_per_cell
+	var cell_yield_interval: int = _get_generation_yield_cell_interval()
 
 	print("[Heightmap] Creating ", tex_width, "x", tex_height, " texture (", grid_width, "x", grid_height, " cells)")
 
 	var image: Image = Image.create(tex_width, tex_height, false, Image.FORMAT_RF)
 	image.fill(Color(0, 0, 0, 1))
 
+	_begin_generation_scope("heightmap.rasterize_cells")
 	var processed_cell_count: int = 0
 	for cell in cells:
 		var grid_x: int = int(cell.position.x) - terrain_grid_rect.position.x
@@ -2293,33 +2791,40 @@ func _generate_heightmap_texture_async(cells: Array[Cell]) -> ImageTexture:
 					image.set_pixel(img_x, img_y, pixel_color)
 
 		processed_cell_count += 1
-		if processed_cell_count % GENERATION_YIELD_CELL_INTERVAL == 0:
+		if processed_cell_count % cell_yield_interval == 0:
 			await get_tree().process_frame
+	_end_generation_scope("heightmap.rasterize_cells", "cells=%d tex=%dx%d" % [cells.size(), tex_width, tex_height])
 
 	if not is_zero_approx(heightmap_noise_displacement_strength):
+		_begin_generation_scope("heightmap.detail_noise")
 		image = await _apply_heightmap_detail_noise_async(image, terrain_grid_rect)
+		_end_generation_scope("heightmap.detail_noise")
 
 	if blur_radius > 0:
 		print("[Heightmap] Applying Gaussian blur with radius ", blur_radius)
-		image = await _apply_gaussian_blur_async(image, blur_radius)
+		_begin_generation_scope("heightmap.gaussian_blur")
+		var blur_bounds: Rect2i = _get_heightmap_inner_blur_bounds(tex_width, tex_height)
+		image = await _apply_gaussian_blur_async(image, blur_radius, blur_bounds)
+		_end_generation_scope("heightmap.gaussian_blur", "radius=%d bounds=%dx%d" % [blur_radius, blur_bounds.size.x, blur_bounds.size.y])
 
+	_begin_generation_scope("heightmap.enforce_outer_perimeter")
 	_enforce_outer_terrain_perimeter_depth(image, cells, terrain_grid_rect)
+	_end_generation_scope("heightmap.enforce_outer_perimeter")
 
-	if export_heightmap_debug:
-		var save_path: String = "res://debug_heightmap.png"
-		image.save_png(save_path)
-		print("[Heightmap] Saved debug texture to ", save_path)
-
+	_begin_generation_scope("heightmap.depth_distribution")
 	var depth_counts: Array[int] = [0, 0, 0, 0, 0]
 	for cell in cells:
 		if cell.depth >= 0 and cell.depth <= 4:
 			depth_counts[cell.depth] += 1
 	print("[Heightmap] Depth distribution: D0=", depth_counts[0], " D1=", depth_counts[1], " D2=", depth_counts[2], " D3=", depth_counts[3], " D4=", depth_counts[4])
+	_end_generation_scope("heightmap.depth_distribution")
 
+	_begin_generation_scope("heightmap.create_texture")
 	_heightmap_image = image
 	_refresh_heightmap_debug_overlay()
 	var texture: ImageTexture = ImageTexture.create_from_image(image)
 	print("[Heightmap] Texture generated successfully")
+	_end_generation_scope("heightmap.create_texture")
 	return texture
 
 
@@ -2332,15 +2837,15 @@ func _generate_wall_heightmap_texture_async(cells: Array[Cell]) -> ImageTexture:
 
 	var image: Image = Image.create(tex_width, tex_height, false, Image.FORMAT_RF)
 	image.fill(Color(0, 0, 0, 1))
+	_begin_generation_scope("wall_heightmap.apply_blend")
 	image = await _apply_wall_heightmap_blend_async(image, cells, terrain_grid_rect)
+	_end_generation_scope("wall_heightmap.apply_blend", "cells=%d tex=%dx%d" % [cells.size(), tex_width, tex_height])
 	_wall_heightmap_image = image
 
-	if export_heightmap_debug:
-		var save_path: String = "res://debug_wall_heightmap.png"
-		image.save_png(save_path)
-		print("[Heightmap] Saved wall mask debug texture to ", save_path)
-
-	return ImageTexture.create_from_image(image)
+	_begin_generation_scope("wall_heightmap.create_texture")
+	var texture: ImageTexture = ImageTexture.create_from_image(image)
+	_end_generation_scope("wall_heightmap.create_texture")
+	return texture
 
 
 func _enforce_outer_terrain_perimeter_depth(image: Image, cells: Array[Cell], terrain_grid_rect: Rect2i) -> void:
@@ -2455,6 +2960,12 @@ func _apply_wall_heightmap_blend(image: Image, cells: Array[Cell], terrain_grid_
 	if not wall_heightmap_blend_enabled or wall_heightmap_blend_strength <= 0.0:
 		return image
 
+	var wall_stamp_data: Array[Vector3] = _build_wall_heightmap_stamp_data(cells, terrain_grid_rect)
+	var csharp_result_image: Image = _try_apply_csharp_wall_heightmap_blend(image, wall_stamp_data)
+	if csharp_result_image != null:
+		return csharp_result_image
+	_note_wall_heightmap_blend_backend("gdscript")
+
 	for cell in cells:
 		if not cell.is_wall:
 			continue
@@ -2467,6 +2978,15 @@ func _apply_wall_heightmap_blend_async(image: Image, cells: Array[Cell], terrain
 	if not wall_heightmap_blend_enabled or wall_heightmap_blend_strength <= 0.0:
 		return image
 
+	_begin_generation_scope("wall_heightmap.stamp_clusters")
+	var wall_stamp_data: Array[Vector3] = _build_wall_heightmap_stamp_data(cells, terrain_grid_rect)
+	var csharp_result_image: Image = _try_apply_csharp_wall_heightmap_blend(image, wall_stamp_data)
+	if csharp_result_image != null:
+		_end_generation_scope("wall_heightmap.stamp_clusters", "processed_walls=%d" % [wall_stamp_data.size()])
+		return csharp_result_image
+	_note_wall_heightmap_blend_backend("gdscript")
+
+	var wall_blend_yield_interval: int = _get_generation_yield_heightmap_blend_interval()
 	var processed_wall_count: int = 0
 
 	for cell in cells:
@@ -2476,8 +2996,10 @@ func _apply_wall_heightmap_blend_async(image: Image, cells: Array[Cell], terrain
 		_stamp_wall_heightmap_cluster(image, cell, terrain_grid_rect)
 
 		processed_wall_count += 1
-		if processed_wall_count % GENERATION_YIELD_HEIGHTMAP_BLEND_INTERVAL == 0:
+		if processed_wall_count % wall_blend_yield_interval == 0:
 			await get_tree().process_frame
+
+	_end_generation_scope("wall_heightmap.stamp_clusters", "processed_walls=%d" % [processed_wall_count])
 
 	return image
 
@@ -2537,6 +3059,14 @@ func _raise_heightmap_region(image: Image, center: Vector2, radius_pixels: float
 
 
 func _apply_heightmap_detail_noise(source_image: Image, terrain_grid_rect: Rect2i) -> Image:
+	if _noise == null or is_zero_approx(heightmap_noise_displacement_strength):
+		return source_image
+
+	var csharp_result_image: Image = _try_apply_csharp_heightmap_detail_noise(source_image, terrain_grid_rect)
+	if csharp_result_image != null:
+		return csharp_result_image
+	_note_heightmap_detail_noise_backend("gdscript")
+
 	var width: int = source_image.get_width()
 	var height: int = source_image.get_height()
 	if width <= 0 or height <= 0:
@@ -2558,12 +3088,22 @@ func _apply_heightmap_detail_noise(source_image: Image, terrain_grid_rect: Rect2
 
 
 func _apply_heightmap_detail_noise_async(source_image: Image, terrain_grid_rect: Rect2i) -> Image:
+	if _noise == null or is_zero_approx(heightmap_noise_displacement_strength):
+		return source_image
+
+	var csharp_result_image: Image = _try_apply_csharp_heightmap_detail_noise(source_image, terrain_grid_rect)
+	if csharp_result_image != null:
+		return csharp_result_image
+	_note_heightmap_detail_noise_backend("gdscript")
+
 	var width: int = source_image.get_width()
 	var height: int = source_image.get_height()
 	if width <= 0 or height <= 0:
 		return source_image
 
 	var result_image: Image = source_image.duplicate()
+	var row_yield_interval: int = _get_generation_yield_row_interval()
+	_begin_generation_scope("heightmap.detail_noise_pixels")
 	for y in range(height):
 		for x in range(width):
 			var grid_x: float = float(x) / float(pixels_per_cell)
@@ -2575,19 +3115,28 @@ func _apply_heightmap_detail_noise_async(source_image: Image, terrain_grid_rect:
 			var displaced_height: float = clampf(current_height + detail_noise, 0.0, 1.0)
 			result_image.set_pixel(x, y, Color(displaced_height, 0, 0, 1))
 
-		if (y + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+		if (y + 1) % row_yield_interval == 0:
 			await get_tree().process_frame
+	_end_generation_scope("heightmap.detail_noise_pixels", "tex=%dx%d" % [width, height])
 
 	return result_image
 
 
 ## Applies Gaussian blur to an image
-func _apply_gaussian_blur(source_image: Image, radius: int) -> Image:
+func _apply_gaussian_blur(source_image: Image, radius: int, blur_bounds: Rect2i = Rect2i(0, 0, 0, 0)) -> Image:
 	var width: int = source_image.get_width()
 	var height: int = source_image.get_height()
+	var effective_blur_bounds: Rect2i = blur_bounds
+	if effective_blur_bounds.size.x <= 0 or effective_blur_bounds.size.y <= 0:
+		effective_blur_bounds = Rect2i(0, 0, width, height)
+
+	var csharp_blurred_image: Image = _try_apply_csharp_gaussian_blur(source_image, radius, effective_blur_bounds)
+	if csharp_blurred_image != null:
+		return csharp_blurred_image
+	_note_heightmap_blur_backend("gdscript")
 	
 	# Create temporary image for horizontal pass
-	var temp_image := Image.create(width, height, false, source_image.get_format())
+	var temp_image: Image = source_image.duplicate()
 	
 	# Generate Gaussian kernel
 	var kernel: Array[float] = []
@@ -2604,22 +3153,22 @@ func _apply_gaussian_blur(source_image: Image, radius: int) -> Image:
 		kernel[i] /= kernel_sum
 	
 	# Horizontal pass
-	for y in range(height):
-		for x in range(width):
+	for y in range(effective_blur_bounds.position.y, effective_blur_bounds.end.y):
+		for x in range(effective_blur_bounds.position.x, effective_blur_bounds.end.x):
 			var sum: float = 0.0
 			for i in range(-radius, radius + 1):
-				var sample_x: int = clampi(x + i, 0, width - 1)
+				var sample_x: int = clampi(x + i, effective_blur_bounds.position.x, effective_blur_bounds.end.x - 1)
 				var pixel: Color = source_image.get_pixel(sample_x, y)
 				sum += pixel.r * kernel[i + radius]
 			temp_image.set_pixel(x, y, Color(sum, 0, 0, 1))
 	
 	# Vertical pass
-	var result_image := Image.create(width, height, false, source_image.get_format())
-	for y in range(height):
-		for x in range(width):
+	var result_image: Image = source_image.duplicate()
+	for y in range(effective_blur_bounds.position.y, effective_blur_bounds.end.y):
+		for x in range(effective_blur_bounds.position.x, effective_blur_bounds.end.x):
 			var sum: float = 0.0
 			for i in range(-radius, radius + 1):
-				var sample_y: int = clampi(y + i, 0, height - 1)
+				var sample_y: int = clampi(y + i, effective_blur_bounds.position.y, effective_blur_bounds.end.y - 1)
 				var pixel: Color = temp_image.get_pixel(x, sample_y)
 				sum += pixel.r * kernel[i + radius]
 			result_image.set_pixel(x, y, Color(sum, 0, 0, 1))
@@ -2627,11 +3176,22 @@ func _apply_gaussian_blur(source_image: Image, radius: int) -> Image:
 	return result_image
 
 
-func _apply_gaussian_blur_async(source_image: Image, radius: int) -> Image:
+func _apply_gaussian_blur_async(source_image: Image, radius: int, blur_bounds: Rect2i = Rect2i(0, 0, 0, 0)) -> Image:
 	var width: int = source_image.get_width()
 	var height: int = source_image.get_height()
-	var temp_image: Image = Image.create(width, height, false, source_image.get_format())
+	var effective_blur_bounds: Rect2i = blur_bounds
+	if effective_blur_bounds.size.x <= 0 or effective_blur_bounds.size.y <= 0:
+		effective_blur_bounds = Rect2i(0, 0, width, height)
 
+	var csharp_blurred_image: Image = _try_apply_csharp_gaussian_blur(source_image, radius, effective_blur_bounds)
+	if csharp_blurred_image != null:
+		return csharp_blurred_image
+	_note_heightmap_blur_backend("gdscript")
+
+	var temp_image: Image = source_image.duplicate()
+	var row_yield_interval: int = _get_generation_yield_row_interval()
+
+	_begin_generation_scope("heightmap.blur_kernel")
 	var kernel: Array[float] = []
 	var kernel_sum: float = 0.0
 	var sigma: float = radius / 2.0
@@ -2643,39 +3203,48 @@ func _apply_gaussian_blur_async(source_image: Image, radius: int) -> Image:
 
 	for i in range(kernel.size()):
 		kernel[i] /= kernel_sum
+	_end_generation_scope("heightmap.blur_kernel", "radius=%d kernel_size=%d" % [radius, kernel.size()])
 
-	for y in range(height):
-		for x in range(width):
+	_begin_generation_scope("heightmap.blur_horizontal_pass")
+	var processed_rows: int = 0
+	for y in range(effective_blur_bounds.position.y, effective_blur_bounds.end.y):
+		for x in range(effective_blur_bounds.position.x, effective_blur_bounds.end.x):
 			var sum: float = 0.0
 			for i in range(-radius, radius + 1):
-				var sample_x: int = clampi(x + i, 0, width - 1)
+				var sample_x: int = clampi(x + i, effective_blur_bounds.position.x, effective_blur_bounds.end.x - 1)
 				var pixel: Color = source_image.get_pixel(sample_x, y)
 				sum += pixel.r * kernel[i + radius]
 			temp_image.set_pixel(x, y, Color(sum, 0, 0, 1))
 
-		if (y + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+		processed_rows += 1
+		if processed_rows % row_yield_interval == 0:
 			await get_tree().process_frame
+	_end_generation_scope("heightmap.blur_horizontal_pass", "bounds=%dx%d" % [effective_blur_bounds.size.x, effective_blur_bounds.size.y])
 
-	var result_image: Image = Image.create(width, height, false, source_image.get_format())
-	for y in range(height):
-		for x in range(width):
+	var result_image: Image = source_image.duplicate()
+	_begin_generation_scope("heightmap.blur_vertical_pass")
+	processed_rows = 0
+	for y in range(effective_blur_bounds.position.y, effective_blur_bounds.end.y):
+		for x in range(effective_blur_bounds.position.x, effective_blur_bounds.end.x):
 			var sum: float = 0.0
 			for i in range(-radius, radius + 1):
-				var sample_y: int = clampi(y + i, 0, height - 1)
+				var sample_y: int = clampi(y + i, effective_blur_bounds.position.y, effective_blur_bounds.end.y - 1)
 				var pixel: Color = temp_image.get_pixel(x, sample_y)
 				sum += pixel.r * kernel[i + radius]
 			result_image.set_pixel(x, y, Color(sum, 0, 0, 1))
 
-		if (y + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+		processed_rows += 1
+		if processed_rows % row_yield_interval == 0:
 			await get_tree().process_frame
+	_end_generation_scope("heightmap.blur_vertical_pass", "bounds=%dx%d" % [effective_blur_bounds.size.x, effective_blur_bounds.size.y])
 
 	return result_image
 
 
 ## Creates a subdivided plane mesh for terrain
 func _create_terrain_mesh() -> MeshInstance3D:
-	var mesh_instance := MeshInstance3D.new()
-	var plane_mesh := PlaneMesh.new()
+	var mesh_instance: MeshInstance3D = _get_or_create_terrain_mesh_instance()
+	var plane_mesh: PlaneMesh = _terrain_plane_mesh
 	
 	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
 	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
@@ -2686,8 +3255,10 @@ func _create_terrain_mesh() -> MeshInstance3D:
 	plane_mesh.size = Vector2(terrain_width, terrain_height)
 	
 	# Subdivide based on grid and mesh_subdivisions
-	plane_mesh.subdivide_width = terrain_grid_rect.size.x * mesh_subdivisions
-	plane_mesh.subdivide_depth = terrain_grid_rect.size.y * mesh_subdivisions
+	var requested_subdivide_width: int = terrain_grid_rect.size.x * mesh_subdivisions
+	var requested_subdivide_depth: int = terrain_grid_rect.size.y * mesh_subdivisions
+	plane_mesh.subdivide_width = mini(requested_subdivide_width, max_terrain_mesh_subdivisions_per_axis)
+	plane_mesh.subdivide_depth = mini(requested_subdivide_depth, max_terrain_mesh_subdivisions_per_axis)
 	
 	mesh_instance.mesh = plane_mesh
 	
@@ -2703,6 +3274,8 @@ func _create_terrain_mesh() -> MeshInstance3D:
 	mesh_instance.extra_cull_margin = 1000.0
 	
 	print("[Terrain Mesh] Created plane ", terrain_width, "x", terrain_height, " with ", plane_mesh.subdivide_width, "x", plane_mesh.subdivide_depth, " subdivisions")
+	if plane_mesh.subdivide_width != requested_subdivide_width or plane_mesh.subdivide_depth != requested_subdivide_depth:
+		print("[Terrain Mesh] Subdivision cap applied: requested ", requested_subdivide_width, "x", requested_subdivide_depth, " capped to ", plane_mesh.subdivide_width, "x", plane_mesh.subdivide_depth)
 	print("[Terrain Mesh] Max displacement: ", max_displacement, " units")
 	print("[Terrain Mesh] Mesh base Y: ", floor_height - max_displacement, " (depth 4)")
 	print("[Terrain Mesh] After displacement Y: ", floor_height, " (depth 0, wall level)")
@@ -2712,16 +3285,22 @@ func _create_terrain_mesh() -> MeshInstance3D:
 
 ## Creates terrain shader with displacement and the shared solid ground material.
 func _create_terrain_displacement_material() -> ShaderMaterial:
-	var shader_material := ShaderMaterial.new()
+	var required_shader_slot_count: int = _get_total_terrain_footprint_shader_slots()
+	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
+	var shader_material: ShaderMaterial = _terrain_shader_material
+	if shader_material != null and is_instance_valid(shader_material) and shader_material.shader != null and _terrain_shader_slot_count == required_shader_slot_count:
+		_configure_terrain_displacement_material(shader_material, terrain_world_rect)
+		return shader_material
+
+	if shader_material == null or not is_instance_valid(shader_material):
+		shader_material = ShaderMaterial.new()
 	var shader := Shader.new()
 	var footprint_uniforms: Array[String] = []
 	var footprint_contributions: Array[String] = []
-	for index in range(_get_total_terrain_footprint_shader_slots()):
+	for index in range(required_shader_slot_count):
 		footprint_uniforms.append("uniform vec4 footprint_data_%d = vec4(0.0, 0.0, -1000.0, 0.0);" % index)
 		footprint_uniforms.append("uniform vec4 footprint_shape_%d = vec4(0.0, 1.0, 0.0, 0.0);" % index)
 		footprint_contributions.append("\tfootprint_mask += compute_footprint_mask(footprint_data_%d, footprint_shape_%d, world_xz);" % [index, index])
-	
-	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
 	
 	# Complete shader with displacement AND material
 	shader.code = """
@@ -2862,6 +3441,14 @@ void fragment() {
 """ % ["\n".join(footprint_uniforms), "\n".join(footprint_contributions)]
 	
 	shader_material.shader = shader
+	_terrain_shader_slot_count = required_shader_slot_count
+	_configure_terrain_displacement_material(shader_material, terrain_world_rect)
+	_terrain_shader_material = shader_material
+
+	return shader_material
+
+
+func _configure_terrain_displacement_material(shader_material: ShaderMaterial, terrain_world_rect: Rect2) -> void:
 	shader_material.set_shader_parameter("heightmap", _heightmap_texture)
 	shader_material.set_shader_parameter("wall_heightmap", _wall_heightmap_texture)
 	shader_material.set_shader_parameter("debug_overlay", _get_heightmap_debug_overlay_texture())
@@ -2890,8 +3477,38 @@ void fragment() {
 		print("[Terrain Shader] Wall mask size: ", _wall_heightmap_texture.get_width(), "x", _wall_heightmap_texture.get_height())
 	print("[Terrain Shader] Displacement amplitude: ", depth_step_height * 4.0 * heightmap_displacement_amplitude)
 	print("[Terrain Shader] Wall displacement amplitude: ", wall_heightmap_extra_height)
-	
-	return shader_material
+	_terrain_shader_material = shader_material
+
+
+func _get_or_create_terrain_mesh_instance() -> MeshInstance3D:
+	if _terrain_mesh_instance != null and is_instance_valid(_terrain_mesh_instance):
+		if _terrain_plane_mesh == null or not is_instance_valid(_terrain_plane_mesh):
+			_terrain_plane_mesh = PlaneMesh.new()
+			_terrain_mesh_instance.mesh = _terrain_plane_mesh
+		return _terrain_mesh_instance
+
+	_terrain_mesh_instance = MeshInstance3D.new()
+	_terrain_plane_mesh = PlaneMesh.new()
+	_terrain_mesh_instance.mesh = _terrain_plane_mesh
+	_terrain_mesh_instance.extra_cull_margin = 1000.0
+	return _terrain_mesh_instance
+
+
+func _get_or_create_terrain_static_body() -> StaticBody3D:
+	if _terrain_static_body != null and is_instance_valid(_terrain_static_body):
+		return _terrain_static_body
+
+	_terrain_static_body = StaticBody3D.new()
+	_terrain_static_body.add_to_group("base_platform")
+	return _terrain_static_body
+
+
+func _get_or_create_terrain_collision_shape_node() -> CollisionShape3D:
+	if _terrain_collision_shape_node != null and is_instance_valid(_terrain_collision_shape_node):
+		return _terrain_collision_shape_node
+
+	_terrain_collision_shape_node = CollisionShape3D.new()
+	return _terrain_collision_shape_node
 
 
 func _apply_ground_surface_parameters_to_terrain_shader(shader_material: ShaderMaterial) -> void:
@@ -3085,6 +3702,8 @@ func _get_total_terrain_footprint_shader_slots() -> int:
 
 ## Spawns a flat base mesh (legacy/fallback).
 func _spawn_base_mesh_flat() -> void:
+	_free_persistent_terrain_nodes()
+
 	# Collect all cells that should have base underneath, including the synthetic perimeter ring.
 	var base_cells: Array[Cell] = _build_terrain_base_cells()
 	
@@ -3326,6 +3945,7 @@ func _cache_room_floor_cells(room: Room) -> void:
 
 func _cache_room_floor_cells_async(room: Room) -> void:
 	var grid_bounds: Rect2i = _get_room_grid_bounds(room)
+	var row_yield_interval: int = _get_generation_yield_row_interval()
 	for y in range(grid_bounds.position.y, grid_bounds.end.y):
 		for x in range(grid_bounds.position.x, grid_bounds.end.x):
 			var lookup_key: Vector2i = Vector2i(x, y)
@@ -3336,7 +3956,7 @@ func _cache_room_floor_cells_async(room: Room) -> void:
 			if _is_world_position_inside_room(Vector2(cell_center.x, cell_center.z), room):
 				_room_floor_lookup[lookup_key] = true
 
-		if ((y - grid_bounds.position.y) + 1) % GENERATION_YIELD_ROW_INTERVAL == 0:
+		if ((y - grid_bounds.position.y) + 1) % row_yield_interval == 0:
 			await get_tree().process_frame
 
 
@@ -3476,6 +4096,8 @@ func _cell_to_world(grid_pos: Vector2) -> Vector3:
 func _flush_room_visualization_batch(room_indices: Array[int]) -> void:
 	if room_indices.is_empty():
 		return
+	if not _should_emit_generation_visualization():
+		return
 
 	_emit_raw_room_visualization_snapshot(room_indices, RAW_ROOM_VISUALIZATION_DURATION_SECONDS)
 	await get_tree().create_timer(RAW_ROOM_VISUALIZATION_DURATION_SECONDS).timeout
@@ -3484,6 +4106,8 @@ func _flush_room_visualization_batch(room_indices: Array[int]) -> void:
 
 
 func _emit_raw_room_visualization_snapshot(room_indices: Array[int], animation_duration: float) -> void:
+	if not _should_emit_generation_visualization():
+		return
 	var raw_rooms: Array[Dictionary] = []
 	for room_index in room_indices:
 		if room_index >= 0 and room_index < _rooms.size():
@@ -3500,6 +4124,8 @@ func _emit_raw_room_visualization_snapshot(room_indices: Array[int], animation_d
 
 
 func _emit_room_visualization_snapshot(animated_room_indices: Array[int], animation_duration: float) -> void:
+	if not _should_emit_generation_visualization():
+		return
 	generation_visualization_updated.emit({
 		"phase": "room_step",
 		"bounds_origin": _get_visualization_bounds_origin(),
@@ -3512,6 +4138,8 @@ func _emit_room_visualization_snapshot(animated_room_indices: Array[int], animat
 
 
 func _emit_cell_outline_visualization_snapshot() -> void:
+	if not _should_emit_generation_visualization():
+		return
 	generation_visualization_updated.emit({
 		"phase": "cell_outlines",
 		"bounds_origin": _get_visualization_bounds_origin(),
@@ -3523,6 +4151,8 @@ func _emit_cell_outline_visualization_snapshot() -> void:
 
 
 func _emit_wall_fill_visualization_snapshot() -> void:
+	if not _should_emit_generation_visualization():
+		return
 	generation_visualization_updated.emit({
 		"phase": "wall_fill",
 		"bounds_origin": _get_visualization_bounds_origin(),
@@ -3535,6 +4165,8 @@ func _emit_wall_fill_visualization_snapshot() -> void:
 
 
 func _emit_depth_fill_visualization_snapshot(fill_duration: float) -> void:
+	if not _should_emit_generation_visualization():
+		return
 	generation_visualization_updated.emit({
 		"phase": "depth_fill",
 		"bounds_origin": _get_visualization_bounds_origin(),
@@ -3548,6 +4180,8 @@ func _emit_depth_fill_visualization_snapshot(fill_duration: float) -> void:
 
 
 func _emit_lava_tint_visualization_snapshot(tint_duration: float) -> void:
+	if not _should_emit_generation_visualization():
+		return
 	generation_visualization_updated.emit({
 		"phase": "lava_tint",
 		"bounds_origin": _get_visualization_bounds_origin(),
@@ -3561,6 +4195,8 @@ func _emit_lava_tint_visualization_snapshot(tint_duration: float) -> void:
 
 
 func _emit_generation_visualization_complete() -> void:
+	if not _should_emit_generation_visualization():
+		return
 	generation_visualization_updated.emit({
 		"phase": "complete",
 		"bounds_origin": _get_visualization_bounds_origin(),
@@ -3573,6 +4209,8 @@ func _emit_generation_visualization_complete() -> void:
 
 
 func _play_wall_fill_visualization_sequence() -> void:
+	if not _should_emit_generation_visualization():
+		return
 	var wall_count: int = _count_visualization_wall_cells()
 	if wall_count <= 0:
 		return

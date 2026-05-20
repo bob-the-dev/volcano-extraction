@@ -1,0 +1,67 @@
+2026-05-20 16:37:47 | +0.007 ms | START | Generation started via generate_map_with_loading
+2026-05-20 16:37:47 | +0.507 ms | PATH | C:/Users/Gebruiker/Documents/volcano-extraction/procedural_generation.log
+2026-05-20 16:37:47 | +0.801 ms | CONFIG | loading_visualization=true
+2026-05-20 16:37:47 | +1.036 ms | STAGE | 1/10 Evicting Yesterday | Sweeping out the last expedition before anyone trips over it.
+2026-05-20 16:37:47 | +377.075 ms | BEGIN | clear_map
+2026-05-20 16:37:47 | +377.633 ms | END | clear_map completed in 0.551 ms | spawned_objects=0
+2026-05-20 16:37:47 | +377.952 ms | STAGE | 2/10 Consulting The Volcano | Reading tremors, static, and several deeply suspicious omens.
+2026-05-20 16:37:47 | +379.395 ms | BEGIN | initialize_generation_state
+2026-05-20 16:37:47 | +379.842 ms | STATE | seed=8466195782733688832 map=136x140 area=19040 target_rooms=23
+2026-05-20 16:37:47 | +380.277 ms | END | initialize_generation_state completed in 0.876 ms | seed=8466195782733688832 map=136x140 target_rooms=23
+2026-05-20 16:37:47 | +380.650 ms | STAGE | 3/10 Sketching Escape Routes | Dropping rooms where future panic will feel most cinematic.
+2026-05-20 16:37:47 | +382.303 ms | BEGIN | generate_rooms
+2026-05-20 16:37:53 | +6081.824 ms | END | generate_rooms completed in 5699.512 ms | rooms=23
+2026-05-20 16:37:53 | +6082.416 ms | STAGE | 4/10 Stamping The Grid | Turning wild crater dreams into tiles the boots can understand.
+2026-05-20 16:37:53 | +6097.091 ms | BEGIN | generate_cells
+2026-05-20 16:37:54 | +7511.279 ms | END | generate_cells completed in 1414.178 ms | cells=2808
+2026-05-20 16:37:54 | +7511.811 ms | STAGE | 5/10 Teaching Rocks To Be Rude | Marking walls in all the places your ankles would least appreciate.
+2026-05-20 16:37:54 | +7533.339 ms | BEGIN | mark_walls
+2026-05-20 16:37:55 | +7784.773 ms | END | mark_walls completed in 251.425 ms | walls=564 floors=1280
+2026-05-20 16:37:55 | +7785.203 ms | BEGIN | wall_fill_visualization
+2026-05-20 16:37:57 | +10625.820 ms | END | wall_fill_visualization completed in 2840.603 ms
+2026-05-20 16:37:57 | +10626.268 ms | STAGE | 6/10 Pouring In The Regret | Letting lava settle into every low spot that looked remotely comfortable.
+2026-05-20 16:37:57 | +10627.702 ms | BEGIN | mark_lava
+2026-05-20 16:37:58 | +10818.378 ms | END | mark_lava completed in 190.657 ms
+2026-05-20 16:37:58 | +10819.187 ms | STAGE | 7/10 Extruding The Disaster | Pulling cliffs, floors, and molten nonsense out of the ground.
+2026-05-20 16:37:58 | +10834.628 ms | BEGIN | spawn_geometry
+2026-05-20 16:37:58 | +10835.235 ms | BEGIN | geometry.select_depth_sources
+2026-05-20 16:37:58 | +10835.851 ms | END | geometry.select_depth_sources completed in 0.615 ms | lava_sources=4 highground=3
+2026-05-20 16:37:58 | +10836.108 ms | BEGIN | geometry.calculate_depths
+2026-05-20 16:37:58 | +11071.302 ms | END | geometry.calculate_depths completed in 235.180 ms | cells=2808
+2026-05-20 16:37:58 | +11071.758 ms | BEGIN | geometry.apply_source_overrides
+2026-05-20 16:37:58 | +11072.091 ms | END | geometry.apply_source_overrides completed in 0.330 ms
+2026-05-20 16:38:00 | +13091.720 ms | BEGIN | geometry.spawn_base_mesh
+2026-05-20 16:38:00 | +13092.205 ms | BEGIN | base_mesh.build_base_cells
+2026-05-20 16:38:00 | +13114.180 ms | END | base_mesh.build_base_cells completed in 21.962 ms | base_cells=2340
+2026-05-20 16:38:00 | +13114.664 ms | BEGIN | base_mesh.generate_heightmap_texture
+2026-05-20 16:38:11 | +23960.629 ms | END | base_mesh.generate_heightmap_texture completed in 10845.948 ms
+2026-05-20 16:38:11 | +23961.420 ms | BEGIN | base_mesh.generate_wall_heightmap_texture
+2026-05-20 16:38:12 | +24742.449 ms | END | base_mesh.generate_wall_heightmap_texture completed in 781.017 ms
+2026-05-20 16:38:12 | +24742.820 ms | BEGIN | base_mesh.create_and_add_terrain_mesh
+2026-05-20 16:38:12 | +24743.086 ms | BEGIN | terrain_mesh.create_mesh_instance
+2026-05-20 16:38:12 | +24840.722 ms | END | terrain_mesh.create_mesh_instance completed in 97.627 ms
+2026-05-20 16:38:12 | +24841.220 ms | BEGIN | terrain_mesh.create_shader_material
+2026-05-20 16:38:12 | +24950.592 ms | END | terrain_mesh.create_shader_material completed in 109.363 ms
+2026-05-20 16:38:12 | +24951.457 ms | BEGIN | terrain_mesh.create_collision_shape
+2026-05-20 16:38:13 | +25756.417 ms | END | terrain_mesh.create_collision_shape completed in 804.950 ms
+2026-05-20 16:38:13 | +25758.831 ms | BEGIN | terrain_mesh.add_nodes
+2026-05-20 16:38:13 | +26297.567 ms | END | terrain_mesh.add_nodes completed in 538.719 ms
+2026-05-20 16:38:13 | +26298.294 ms | END | base_mesh.create_and_add_terrain_mesh completed in 1555.467 ms
+2026-05-20 16:38:13 | +26298.907 ms | END | geometry.spawn_base_mesh completed in 13207.174 ms
+2026-05-20 16:38:13 | +26299.493 ms | BEGIN | geometry.spawn_lava_volume
+2026-05-20 16:38:13 | +26302.272 ms | END | geometry.spawn_lava_volume completed in 2.775 ms
+2026-05-20 16:38:13 | +26302.717 ms | BEGIN | geometry.spawn_lava_orbs
+2026-05-20 16:38:13 | +26305.261 ms | END | geometry.spawn_lava_orbs completed in 2.538 ms
+2026-05-20 16:38:13 | +26311.149 ms | BEGIN | geometry.collect_floor_cells
+2026-05-20 16:38:14 | +27149.016 ms | END | geometry.collect_floor_cells completed in 837.856 ms | floors=1280
+2026-05-20 16:38:14 | +27149.630 ms | END | spawn_geometry completed in 16314.997 ms | floors=1280 lava_sources=4 highground=3
+2026-05-20 16:38:14 | +27150.059 ms | STAGE | 8/10 Launching The Mascot | Floating our roundest survivor into the danger zone.
+2026-05-20 16:38:14 | +27165.887 ms | BEGIN | spawn_deepest_point_scenes
+2026-05-20 16:38:14 | +27167.373 ms | END | spawn_deepest_point_scenes completed in 1.478 ms | spawned=4
+2026-05-20 16:38:14 | +27167.880 ms | STAGE | 9/10 Dropping You Somewhere Legal | Finding a tile that counts as safe enough for paperwork.
+2026-05-20 16:38:14 | +27182.484 ms | BEGIN | place_player_on_floor
+2026-05-20 16:38:14 | +27184.179 ms | END | place_player_on_floor completed in 1.687 ms
+2026-05-20 16:38:14 | +27184.766 ms | STAGE | 10/10 Teaching The Map To Gossip | Preparing exploration tracking for every questionable decision ahead.
+2026-05-20 16:38:14 | +27199.347 ms | BEGIN | setup_exploration_tracking
+2026-05-20 16:38:14 | +27200.309 ms | END | setup_exploration_tracking completed in 0.952 ms | explored_cells=61
+2026-05-20 16:38:14 | +27221.156 ms | DONE | Generation finished in 27221.137 ms | rooms=23 cells=2808 floors=1280

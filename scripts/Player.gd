@@ -3,10 +3,21 @@ extends CharacterBody3D
 @onready var camera: Camera3D = get_viewport().get_camera_3d()
 @onready var visual_root: Node3D = $VisualRoot
 @onready var visual_motion_root: Node3D = $VisualRoot/FatmanMotionRoot
+@onready var fatman_visual: Node3D = $VisualRoot/FatmanMotionRoot/Fatman
 @onready var face_sprite: Sprite3D = $VisualRoot/FatmanMotionRoot/FaceSprite
 
 @export var can_move : bool = true
 @export var has_gravity : bool = true
+## Scene path to the spring arm pivot that owns direct mouse camera orbit.
+@export var camera_orbit_pivot_path: NodePath = NodePath("SpringArmPivot")
+## Degrees applied per pixel of right-mouse drag camera movement.
+@export_range(0.01, 1.0, 0.01) var camera_drag_sensitivity_degrees: float = 0.12
+## Maximum upward pitch deviation from the spring arm pivot's initial pitch.
+@export_range(0.0, 89.0, 0.1) var camera_drag_max_pitch_up_deviation_degrees: float = 18.0
+## Maximum downward pitch deviation from the spring arm pivot's initial pitch.
+@export_range(0.0, 89.0, 0.1) var camera_drag_max_pitch_down_deviation_degrees: float = 18.0
+## Minimum height the orbit camera can reach relative to the player origin.
+@export_range(0.0, 32.0, 0.1) var camera_drag_min_height_above_player: float = 4.0
 
 ## Enable click-to-move functionality
 @export var click_to_move : bool = true
@@ -35,6 +46,8 @@ extends CharacterBody3D
 @export var walk_roll_degrees: float = 8.0
 ## Gentle yaw sway while walking.
 @export var walk_yaw_degrees: float = 5.0
+## Local center used as the pivot for visual bob yaw/roll so the model rotates around its body instead of an off-center import origin.
+@export var visual_motion_rotation_pivot_offset: Vector3 = Vector3(0.0, 0.56, 0.0)
 ## Local position of the simple face sprite on the fatman model.
 @export var face_local_position: Vector3 = Vector3(0.0, 0.56, 0.16)
 ## Size multiplier for the simple face sprite.
@@ -77,6 +90,12 @@ extends CharacterBody3D
 @export var footstep_ground_probe_distance : float = 1.4
 
 @export_group("Input Actions")
+## Allow manual movement input even while click-to-move remains enabled.
+@export var manual_movement_enabled: bool = true
+## Read the primary gamepad left stick directly as a movement source.
+@export var joystick_movement_enabled: bool = true
+## Deadzone applied to raw joystick movement input.
+@export_range(0.0, 1.0, 0.01) var joystick_movement_deadzone: float = 0.2
 ## Name of Input Action to move Left.
 @export var input_left : String = "move_left"
 ## Name of Input Action to move Right.
@@ -166,11 +185,13 @@ var _footstep_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var _last_terrain_footprint_position: Vector3 = Vector3.ZERO
 var _has_last_terrain_footprint_position: bool = false
 var _camera_orbit_rig: Node3D = null
+var _camera_orbit_pivot: Node3D = null
 var _camera_orbit_tween: Tween = null
 var _camera_orbit_base_horizontal_rotation: float = 0.0
 var _has_camera_orbit_base_horizontal_rotation: bool = false
 var _visual_motion_time: float = 0.0
 var _visual_motion_base_position: Vector3 = Vector3.ZERO
+var _visual_motion_rotation_pivot: Node3D = null
 
 
 func _toggle_fullscreen_mode() -> void:
@@ -196,6 +217,8 @@ func _ready() -> void:
 	# Add to player group for easy lookup
 	add_to_group("player")
 	_footstep_rng.randomize()
+	_camera_orbit_pivot = _resolve_camera_orbit_pivot()
+	_apply_camera_drag_settings_to_pivot()
 	_camera_orbit_rig = _resolve_camera_orbit_rig()
 	_capture_camera_orbit_base_rotation()
 	if _camera_orbit_rig:
@@ -247,6 +270,7 @@ func _ready() -> void:
 
 	if visual_motion_root:
 		_visual_motion_base_position = visual_motion_root.position
+		_ensure_visual_motion_rotation_pivot()
 
 	if face_sprite:
 		face_sprite.position = face_local_position
@@ -542,6 +566,12 @@ func _input(event: InputEvent) -> void:
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_TAB or event.physical_keycode == KEY_TAB):
+		var camera_orbit_pivot: Node3D = _resolve_camera_orbit_pivot()
+		if camera_orbit_pivot != null and camera_orbit_pivot.has_method("reset_orbit"):
+			_log_camera_orbit("Tab detected. Resetting spring arm pivot orbit.")
+			camera_orbit_pivot.call("reset_orbit")
+			get_viewport().set_input_as_handled()
+			return
 		_log_camera_orbit("Tab detected. keycode=%s physical_keycode=%s" % [event.keycode, event.physical_keycode])
 		_rotate_camera_clockwise()
 		return
@@ -551,6 +581,8 @@ func _input(event: InputEvent) -> void:
 	
 	# Handle mouse motion for hover highlighting
 	if event is InputEventMouseMotion:
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and _resolve_camera_orbit_pivot() != null:
+			return
 		_handle_hover(event.position)
 	
 	# Handle mouse click for movement
@@ -577,6 +609,35 @@ func _resolve_camera_orbit_rig() -> Node3D:
 		_log_camera_orbit("Failed to resolve rig. Configured path: " + str(camera_orbit_rig_path))
 
 	return _camera_orbit_rig
+
+
+func _resolve_camera_orbit_pivot() -> Node3D:
+	if _camera_orbit_pivot and is_instance_valid(_camera_orbit_pivot):
+		return _camera_orbit_pivot
+
+	if not camera_orbit_pivot_path.is_empty():
+		_camera_orbit_pivot = get_node_or_null(camera_orbit_pivot_path) as Node3D
+
+	if _camera_orbit_pivot == null:
+		_camera_orbit_pivot = get_node_or_null("SpringArmPivot") as Node3D
+
+	return _camera_orbit_pivot
+
+
+func _apply_camera_drag_settings_to_pivot() -> void:
+	var camera_orbit_pivot: Node3D = _resolve_camera_orbit_pivot()
+	if camera_orbit_pivot == null:
+		return
+	if not camera_orbit_pivot.has_method("configure_player_orbit"):
+		return
+
+	camera_orbit_pivot.call(
+		"configure_player_orbit",
+		camera_drag_sensitivity_degrees,
+		camera_drag_max_pitch_up_deviation_degrees,
+		camera_drag_max_pitch_down_deviation_degrees,
+		camera_drag_min_height_above_player
+	)
 
 
 func _capture_camera_orbit_base_rotation() -> void:
@@ -648,22 +709,79 @@ func _rotate_camera_clockwise() -> void:
 
 func _physics_process(delta: float) -> void:
 	var position_before_move: Vector3 = global_position
+	var manual_input_direction: Vector2 = _get_manual_movement_input()
 
 	# Apply gravity
 	if has_gravity and not is_on_floor():
 		velocity += get_gravity() * delta
 
 	# Handle movement
-	if click_to_move:
+	if manual_input_direction.length_squared() > 0.0001:
+		if _has_target or not _current_path.is_empty():
+			_cancel_click_to_move_target()
+		_handle_direct_input(delta, manual_input_direction)
+	elif click_to_move:
 		_handle_click_to_move(delta)
 	else:
-		_handle_direct_input(delta)
+		_stop_horizontal_movement()
 	
 	# Move and slide
 	move_and_slide()
 	_align_visual_to_ground(delta)
 	_update_visual_motion(delta)
 	_update_terrain_footprints(delta, position_before_move)
+
+
+func _get_manual_movement_input() -> Vector2:
+	if not manual_movement_enabled:
+		return Vector2.ZERO
+
+	var action_input: Vector2 = Input.get_vector(input_left, input_right, input_forward, input_back)
+	var joystick_input: Vector2 = Vector2.ZERO
+	if joystick_movement_enabled:
+		joystick_input = _get_joystick_movement_input()
+
+	if joystick_input.length_squared() > action_input.length_squared():
+		return joystick_input
+
+	return action_input
+
+
+func _get_joystick_movement_input() -> Vector2:
+	var connected_joypads: PackedInt32Array = Input.get_connected_joypads()
+	if connected_joypads.is_empty():
+		return Vector2.ZERO
+
+	var joypad_device: int = connected_joypads[0]
+	var raw_input: Vector2 = Vector2(
+		Input.get_joy_axis(joypad_device, JOY_AXIS_LEFT_X),
+		Input.get_joy_axis(joypad_device, JOY_AXIS_LEFT_Y)
+	)
+	return _apply_radial_input_deadzone(raw_input, joystick_movement_deadzone)
+
+
+func _apply_radial_input_deadzone(raw_input: Vector2, deadzone: float) -> Vector2:
+	var safe_deadzone: float = clampf(deadzone, 0.0, 0.99)
+	var input_length: float = raw_input.length()
+	if input_length <= safe_deadzone:
+		return Vector2.ZERO
+
+	var scaled_length: float = clampf((input_length - safe_deadzone) / (1.0 - safe_deadzone), 0.0, 1.0)
+	return raw_input.normalized() * scaled_length
+
+
+func _stop_horizontal_movement() -> void:
+	velocity.x = move_toward(velocity.x, 0.0, move_speed)
+	velocity.z = move_toward(velocity.z, 0.0, move_speed)
+
+
+func _cancel_click_to_move_target() -> void:
+	_has_target = false
+	_current_path.clear()
+	_current_path_index = 0
+	_unhighlight_tile(_target_tile)
+	_target_tile = null
+	_clear_target_indicator()
 
 
 func _align_visual_to_ground(delta: float) -> void:
@@ -720,7 +838,31 @@ func _update_visual_motion(delta: float) -> void:
 		roll_radians = sin(phase) * deg_to_rad(walk_roll_degrees) * move_ratio
 
 	visual_motion_root.position = _visual_motion_base_position + Vector3(0.0, height_offset, 0.0)
-	visual_motion_root.rotation = Vector3(0.0, yaw_radians, roll_radians)
+	visual_motion_root.rotation = Vector3.ZERO
+
+	if _visual_motion_rotation_pivot != null and is_instance_valid(_visual_motion_rotation_pivot):
+		_visual_motion_rotation_pivot.rotation = Vector3(0.0, yaw_radians, roll_radians)
+	else:
+		visual_motion_root.rotation = Vector3(0.0, yaw_radians, roll_radians)
+
+
+func _ensure_visual_motion_rotation_pivot() -> void:
+	if visual_motion_root == null:
+		return
+	if _visual_motion_rotation_pivot != null and is_instance_valid(_visual_motion_rotation_pivot):
+		_visual_motion_rotation_pivot.position = visual_motion_rotation_pivot_offset
+		return
+
+	_visual_motion_rotation_pivot = Node3D.new()
+	_visual_motion_rotation_pivot.name = "VisualMotionRotationPivot"
+	_visual_motion_rotation_pivot.position = visual_motion_rotation_pivot_offset
+	visual_motion_root.add_child(_visual_motion_rotation_pivot)
+
+	if fatman_visual != null and is_instance_valid(fatman_visual):
+		fatman_visual.reparent(_visual_motion_rotation_pivot, true)
+
+	if face_sprite != null and is_instance_valid(face_sprite):
+		face_sprite.reparent(_visual_motion_rotation_pivot, false)
 
 
 func _ensure_face_texture() -> void:
@@ -885,26 +1027,47 @@ func _get_footprint_ground_probe() -> Dictionary:
 
 
 ## Handle traditional WASD-style input
-func _handle_direct_input(delta: float) -> void:
+func _handle_direct_input(delta: float, input_dir: Vector2) -> void:
 	if not can_move:
-		velocity.x = 0
-		velocity.z = 0
+		_stop_horizontal_movement()
 		return
-	
-	var input_dir: Vector2 = Input.get_vector(input_left, input_right, input_forward, input_back)
-	
-	if input_dir.length() > 0:
-		# Move in input direction
-		velocity.x = input_dir.x * move_speed
-		velocity.z = input_dir.y * move_speed
-		
-		# Rotate to face direction
-		var target_rotation: float = atan2(input_dir.x, input_dir.y)
-		rotation.y = lerp_angle(rotation.y, target_rotation, rotation_speed * delta)
+
+	if input_dir.length_squared() <= 0.0001:
+		_stop_horizontal_movement()
+		return
+
+	var movement_camera: Camera3D = camera
+	if movement_camera == null or not is_instance_valid(movement_camera):
+		movement_camera = get_viewport().get_camera_3d()
+
+	var world_direction: Vector3 = Vector3.ZERO
+	if movement_camera != null and is_instance_valid(movement_camera):
+		var camera_basis: Basis = movement_camera.global_transform.basis.orthonormalized()
+		var camera_right: Vector3 = camera_basis.x
+		var camera_forward: Vector3 = -camera_basis.z
+		camera_right.y = 0.0
+		camera_forward.y = 0.0
+		if camera_right.length_squared() > 0.0001:
+			camera_right = camera_right.normalized()
+		if camera_forward.length_squared() > 0.0001:
+			camera_forward = camera_forward.normalized()
+		world_direction = (camera_right * input_dir.x) - (camera_forward * input_dir.y)
 	else:
-		# Stop moving
-		velocity.x = move_toward(velocity.x, 0, move_speed)
-		velocity.z = move_toward(velocity.z, 0, move_speed)
+		var player_basis: Basis = global_transform.basis.orthonormalized()
+		world_direction = (player_basis.x * input_dir.x) - (player_basis.z * input_dir.y)
+
+	world_direction.y = 0.0
+	if world_direction.length_squared() <= 0.0001:
+		_stop_horizontal_movement()
+		return
+
+	world_direction = world_direction.normalized()
+	velocity.x = world_direction.x * move_speed
+	velocity.z = world_direction.z * move_speed
+
+	# Rotate to face the actual travel direction so movement stays aligned to the player's own heading.
+	var target_rotation: float = atan2(world_direction.x, world_direction.z)
+	rotation.y = lerp_angle(rotation.y, target_rotation, rotation_speed * delta)
 
 
 ## Handle click-to-move

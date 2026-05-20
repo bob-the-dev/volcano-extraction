@@ -22,6 +22,8 @@ floor_constant_speed = true
 floor_max_angle = 0.30543262
 floor_snap_length = 0.0
 script = ExtResource("2_i3pqv")
+camera_drag_sensitivity_degrees = 0.06999999999999999
+camera_drag_max_pitch_down_deviation_degrees = 8.0
 
 [node name="CollisionShape3D2" type="CollisionShape3D" parent="." unique_id=848836983]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0, 0)
@@ -60,6 +62,7 @@ attributes = SubResource("CameraAttributesPractical_hqtel")
 v_offset = -26.0
 current = true
 fov = 37.849285
+near = 2.0
 script = ExtResource("4_c2t1o")
 spring_arm = NodePath("../SpringArm3D/SpringPosition")
 lava_screenshake_strength = 0.0

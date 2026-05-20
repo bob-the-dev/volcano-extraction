@@ -458,8 +458,8 @@ func _build_centered_square_rect(cell_rect: Rect2, side_pixels: float, spacing_p
 		return Rect2(cell_rect.get_center(), Vector2.ZERO)
 
 	var side: float = maxf(minf(round(side_pixels), round(max_side)), 1.0)
-	var position: Vector2 = (cell_rect.get_center() - (Vector2.ONE * side * 0.5)).round()
-	return Rect2(position, Vector2.ONE * side)
+	var rect_position: Vector2 = (cell_rect.get_center() - (Vector2.ONE * side * 0.5)).round()
+	return Rect2(rect_position, Vector2.ONE * side)
 
 
 func _draw_blurred_circle(center: Vector2, radius: float, color: Color) -> void:
@@ -468,7 +468,7 @@ func _draw_blurred_circle(center: Vector2, radius: float, color: Color) -> void:
 	draw_circle(center, radius, solid_color)
 
 
-func _draw_blurred_polygon(points: PackedVector2Array, center: Vector2, color: Color) -> void:
+func _draw_blurred_polygon(points: PackedVector2Array, _center: Vector2, color: Color) -> void:
 	var solid_color: Color = color
 	solid_color.a = 1.0
 	draw_colored_polygon(points, solid_color)
