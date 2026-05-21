@@ -77,9 +77,20 @@ func configure_player_orbit(
 	_target_orbit_pitch_radians = _clamp_pitch_to_constraints(_target_orbit_pitch_radians, _target_orbit_yaw_radians)
 
 
+func set_player_orbit_enabled(enabled: bool) -> void:
+	right_mouse_drag_enabled = enabled
+	if not enabled:
+		_is_right_mouse_dragging = false
+
+
 func reset_orbit() -> void:
 	_target_orbit_yaw_radians = _initial_orbit_yaw_radians
 	_target_orbit_pitch_radians = _clamp_pitch_to_constraints(_initial_orbit_pitch_radians, _initial_orbit_yaw_radians)
+
+
+func set_orbit_world_yaw(world_yaw_radians: float) -> void:
+	_target_orbit_yaw_radians = wrapf(world_yaw_radians, -PI, PI)
+	_target_orbit_pitch_radians = _clamp_pitch_to_constraints(_initial_orbit_pitch_radians, _target_orbit_yaw_radians)
 
 
 func _apply_mouse_orbit_drag(relative_motion: Vector2) -> void:

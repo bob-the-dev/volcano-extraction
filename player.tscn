@@ -12,10 +12,11 @@ points = PackedVector3Array(0.28361923, 0.36825, -0.032891147, 0.23571265, 0.368
 [sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_hqtel"]
 points = PackedVector3Array(0.024459645, 0.75532496, 0.11109418, 0.11998977, 0.589422, 0.17512456, 0.11998977, 0.6144305, 0.1626145, 0.12926756, 0.682155, 0.104997724, 0.024459645, 0.75532496, 0.062146366, -0.024503991, 0.75532496, 0.11109418, 1.4901161e-08, 0.56441355, 0.18763462, 0.06876217, 0.3976232, 0.20261148, 0.11998977, 0.3976232, 0.1826306, 0.15998633, 0.6144305, 0.12261754, 0.2267509, 0.4841848, -0.055765375, 0.12926756, 0.682155, 0.06827806, 0.11998977, 0.6613012, -0.087375306, 0.08998121, 0.6613012, -0.11736422, -0.024503991, 0.75532496, 0.062146366, -0.12003412, 0.6144305, 0.1626145, -0.12003412, 0.589422, 0.17512456, -0.12931192, 0.682155, 0.104997724, -0.068806544, 0.3976232, 0.20261148, 0.06876217, 0.34324998, 0.2026467, 0.11998977, 0.34324998, 0.1826306, 0.15998633, 0.34324998, 0.12261754, 0.2267509, 0.4369914, -0.055765375, 0.19336863, 0.4841848, -0.089137286, 0.11998977, 0.6144305, -0.15736118, 0.15998633, 0.6144305, -0.11736422, -0.09002559, 0.6613012, -0.11736422, -0.12003412, 0.6613012, -0.087375306, -0.12931192, 0.682155, 0.06827806, -0.16003071, 0.6144305, 0.12261754, -0.12003412, 0.3976232, 0.1826306, -0.22675087, 0.4841848, -0.055765375, -0.068806544, 0.34324998, 0.20261148, 0.21005975, 0.4133947, -0.0390618, 0.15998633, 0.34324998, -0.11736422, 0.11998977, 0.34324998, -0.15736118, 0.19336863, 0.4369914, -0.089137286, -0.12003412, 0.6144305, -0.15736118, -0.16003071, 0.6144305, -0.11736422, -0.16003071, 0.34324998, 0.12261754, -0.12003412, 0.34324998, 0.1826306, -0.19341299, 0.4841848, -0.089137286, -0.22675087, 0.4369914, -0.055765375, -0.12003412, 0.34324998, -0.15736118, -0.21010412, 0.4133947, -0.0390618, -0.16003071, 0.34324998, -0.11736422, -0.19341299, 0.4369914, -0.089137286)
 
-[sub_resource type="CameraAttributesPractical" id="CameraAttributesPractical_hqtel"]
+[sub_resource type="CameraAttributesPractical" id="CameraAttributesPractical_sweqy"]
 dof_blur_far_enabled = true
-dof_blur_far_distance = 30.0
-dof_blur_amount = 0.2
+dof_blur_far_distance = 80.0
+dof_blur_far_transition = 80.0
+dof_blur_amount = 0.58
 
 [node name="Player" type="CharacterBody3D" unique_id=2083504003]
 floor_constant_speed = true
@@ -24,6 +25,7 @@ floor_snap_length = 0.0
 script = ExtResource("2_i3pqv")
 camera_drag_sensitivity_degrees = 0.06999999999999999
 camera_drag_max_pitch_down_deviation_degrees = 8.0
+debug_movement = false
 
 [node name="CollisionShape3D2" type="CollisionShape3D" parent="." unique_id=848836983]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0, 0)
@@ -58,15 +60,13 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.24, 0, 0)
 
 [node name="Camera3D" type="Camera3D" parent="SpringArmPivot" unique_id=1473785525]
 transform = Transform3D(1, 0, 0, 0, 0.5735765, -0.8191521, 0, 0.8191521, 0.5735765, 0, 0, 0)
-attributes = SubResource("CameraAttributesPractical_hqtel")
+attributes = SubResource("CameraAttributesPractical_sweqy")
 v_offset = -26.0
 current = true
-fov = 37.849285
+fov = 40.0
 near = 2.0
 script = ExtResource("4_c2t1o")
-spring_arm = NodePath("../SpringArm3D/SpringPosition")
 lava_screenshake_strength = 0.0
-enable_perimeter_fog = false
 perimeter_fog_far_margin = 8.0
 perimeter_fog_height = 15.0
 perimeter_fog_density = 0.48

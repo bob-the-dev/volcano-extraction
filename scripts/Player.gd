@@ -61,6 +61,24 @@ extends CharacterBody3D
 ## Duration of the camera orbit tween in seconds.
 @export var camera_orbit_rotate_duration: float = 0.18
 
+@export_group("Room Camera Lock")
+## Enable top-down fixed camera behavior inside the designated procedural room.
+@export var room_camera_lock_enabled: bool = true
+## Print room and camera debug values when entering the lock room.
+@export var room_camera_lock_debug_logging_enabled: bool = true
+## Additional height above the room center used by the fixed top-down camera.
+@export var room_camera_lock_height_offset: float = 8.0
+## Minimum top-down camera height above the room center.
+@export var room_camera_lock_min_height: float = 24.0
+## Multiplier applied to the room radius when computing top-down camera height.
+@export var room_camera_lock_height_multiplier: float = 1.8
+## Pitch used while the camera is locked above the room.
+@export_range(-90.0, 0.0, 0.1) var room_camera_lock_pitch_degrees: float = -90.0
+## Yaw used while the camera is locked above the room.
+@export_range(-180.0, 180.0, 0.1) var room_camera_lock_yaw_degrees: float = 0.0
+## Snap interval used when selecting the locked camera yaw from the player's entry direction.
+@export_range(1.0, 180.0, 1.0) var room_camera_lock_yaw_snap_degrees: float = 45.0
+
 @export_group("Footprints")
 ## Enable terrain footprint emission while grounded and moving.
 @export var emit_terrain_footprints : bool = true
@@ -192,6 +210,12 @@ var _has_camera_orbit_base_horizontal_rotation: bool = false
 var _visual_motion_time: float = 0.0
 var _visual_motion_base_position: Vector3 = Vector3.ZERO
 var _visual_motion_rotation_pivot: Node3D = null
+var _room_camera_lock_data: Dictionary = {}
+var _room_camera_lock_center: Vector3 = Vector3.ZERO
+var _room_camera_lock_radius: float = 0.0
+var _has_room_camera_lock_zone: bool = false
+var _room_camera_lock_active: bool = false
+var _room_camera_lock_active_yaw_degrees: float = 0.0
 
 
 func _toggle_fullscreen_mode() -> void:
@@ -261,6 +285,7 @@ func _ready() -> void:
 			if not floor_cells.is_empty():
 				print("[Player] Map already generated, initializing pathfinding immediately")
 				call_deferred("_initialize_pathfinding")
+				call_deferred("_refresh_room_camera_lock_data")
 			else:
 				print("[Player] Map not yet generated, waiting for map_regenerated signal")
 		else:
@@ -283,6 +308,7 @@ func _on_map_regenerated() -> void:
 	if debug_movement:
 		print("Map regenerated - rebuilding pathfinding")
 	_initialize_pathfinding()
+	_refresh_room_camera_lock_data()
 
 
 ## Initialize pathfinding grid from procedural map
@@ -640,6 +666,196 @@ func _apply_camera_drag_settings_to_pivot() -> void:
 	)
 
 
+func _resolve_active_camera() -> Camera3D:
+	if camera != null and is_instance_valid(camera):
+		return camera
+
+	return get_viewport().get_camera_3d()
+
+
+func _set_room_camera_orbit_enabled(enabled: bool) -> void:
+	var camera_orbit_pivot: Node3D = _resolve_camera_orbit_pivot()
+	if camera_orbit_pivot == null:
+		return
+
+	if camera_orbit_pivot.has_method("set_player_orbit_enabled"):
+		camera_orbit_pivot.call("set_player_orbit_enabled", enabled)
+		return
+
+	if "right_mouse_drag_enabled" in camera_orbit_pivot:
+		camera_orbit_pivot.set("right_mouse_drag_enabled", enabled)
+
+
+func _clear_room_camera_lock_data() -> void:
+	_room_camera_lock_data.clear()
+	_has_room_camera_lock_zone = false
+	_room_camera_lock_center = Vector3.ZERO
+	_room_camera_lock_radius = 0.0
+	_room_camera_lock_active_yaw_degrees = room_camera_lock_yaw_degrees
+	if _room_camera_lock_active:
+		_exit_room_camera_lock()
+
+
+func _refresh_room_camera_lock_data() -> void:
+	if not room_camera_lock_enabled or procedural_map == null or not is_instance_valid(procedural_map):
+		_clear_room_camera_lock_data()
+		return
+
+	if not procedural_map.has_method("get_camera_lock_room_data"):
+		_clear_room_camera_lock_data()
+		return
+
+	var room_data: Dictionary = procedural_map.call("get_camera_lock_room_data")
+	if room_data.is_empty():
+		_clear_room_camera_lock_data()
+		return
+
+	_room_camera_lock_data = room_data.duplicate(true)
+	var center_variant: Variant = room_data.get("center", Vector3.ZERO)
+	if not center_variant is Vector3:
+		_clear_room_camera_lock_data()
+		return
+
+	_room_camera_lock_center = center_variant
+	_room_camera_lock_radius = float(room_data.get("radius", 0.0))
+	_has_room_camera_lock_zone = _room_camera_lock_radius > 0.0
+	if not _has_room_camera_lock_zone:
+		_clear_room_camera_lock_data()
+		return
+
+	_update_room_camera_lock_state()
+
+
+func _get_room_camera_lock_rotation() -> Vector3:
+	return Vector3(
+		deg_to_rad(room_camera_lock_pitch_degrees),
+		deg_to_rad(_room_camera_lock_active_yaw_degrees),
+		0.0
+	)
+
+
+func _update_room_camera_lock_entry_yaw() -> void:
+	_room_camera_lock_active_yaw_degrees = room_camera_lock_yaw_degrees
+	var entry_offset: Vector2 = Vector2(
+		global_position.x - _room_camera_lock_center.x,
+		global_position.z - _room_camera_lock_center.z
+	)
+	if entry_offset.length_squared() <= 0.0001:
+		return
+
+	var raw_entry_yaw_degrees: float = rad_to_deg(atan2(entry_offset.x, entry_offset.y))
+	var snap_interval_degrees: float = maxf(room_camera_lock_yaw_snap_degrees, 1.0)
+	var snapped_entry_yaw_degrees: float = round(raw_entry_yaw_degrees / snap_interval_degrees) * snap_interval_degrees
+	_room_camera_lock_active_yaw_degrees = wrapf(snapped_entry_yaw_degrees + room_camera_lock_yaw_degrees, -180.0, 180.0)
+
+
+func _apply_room_camera_lock_view() -> void:
+	var active_camera: Camera3D = _resolve_active_camera()
+	if active_camera == null or not active_camera.has_method("set_fixed_room_view"):
+		return
+
+	var room_camera_height: float = _get_room_camera_lock_height(active_camera)
+	var room_camera_position: Vector3 = _room_camera_lock_center + Vector3.UP * room_camera_height
+	active_camera.call("set_fixed_room_view", room_camera_position, _get_room_camera_lock_rotation())
+
+
+func _get_room_camera_lock_height(active_camera: Camera3D) -> float:
+	var minimum_room_camera_height: float = maxf(_room_camera_lock_radius * room_camera_lock_height_multiplier, room_camera_lock_min_height) + room_camera_lock_height_offset
+	if active_camera == null:
+		return minimum_room_camera_height
+
+	var viewport_size: Vector2 = active_camera.get_viewport().get_visible_rect().size
+	var viewport_aspect_ratio: float = 1.0
+	if viewport_size.y > 0.001:
+		viewport_aspect_ratio = maxf(viewport_size.x / viewport_size.y, 0.001)
+
+	var vertical_half_span_scale: float = tan(deg_to_rad(active_camera.fov * 0.5))
+	var horizontal_half_span_scale: float = vertical_half_span_scale * viewport_aspect_ratio
+	var limiting_half_span_scale: float = minf(vertical_half_span_scale, horizontal_half_span_scale)
+	if limiting_half_span_scale <= 0.001:
+		return minimum_room_camera_height
+
+	var required_room_camera_height: float = (_room_camera_lock_radius / limiting_half_span_scale) + room_camera_lock_height_offset
+	return maxf(minimum_room_camera_height, required_room_camera_height)
+
+
+func _log_room_camera_lock_entry() -> void:
+	if not room_camera_lock_debug_logging_enabled:
+		return
+
+	var active_camera: Camera3D = _resolve_active_camera()
+	if active_camera == null:
+		return
+
+	var defined_grid_center_variant: Variant = _room_camera_lock_data.get("defined_grid_center", Vector2.ZERO)
+	var resolved_grid_center_variant: Variant = _room_camera_lock_data.get("resolved_grid_center", Vector2.ZERO)
+	var room_index: int = int(_room_camera_lock_data.get("room_index", -1))
+	var defined_grid_center: Vector2 = defined_grid_center_variant if defined_grid_center_variant is Vector2 else Vector2.ZERO
+	var resolved_grid_center: Vector2 = resolved_grid_center_variant if resolved_grid_center_variant is Vector2 else Vector2.ZERO
+	var room_camera_height: float = _get_room_camera_lock_height(active_camera)
+	var camera_target_position: Vector3 = _room_camera_lock_center + Vector3.UP * room_camera_height
+	var camera_distance_from_player: float = active_camera.global_position.distance_to(global_position)
+	var target_distance_from_player: float = camera_target_position.distance_to(global_position)
+
+	print("[RoomCameraLock] Entered room lock")
+	print("[RoomCameraLock] Room index: ", room_index)
+	print("[RoomCameraLock] Defined center grid (x, y): ", defined_grid_center)
+	print("[RoomCameraLock] Resolved center grid (x, y): ", resolved_grid_center)
+	print("[RoomCameraLock] Calculated center global 3D: ", _room_camera_lock_center)
+	print("[RoomCameraLock] Room radius: ", _room_camera_lock_radius)
+	print("[RoomCameraLock] Camera global position: ", active_camera.global_position)
+	print("[RoomCameraLock] Camera target global position: ", camera_target_position)
+	print("[RoomCameraLock] Camera distance from player: ", camera_distance_from_player)
+	print("[RoomCameraLock] Camera target distance from player: ", target_distance_from_player)
+
+
+func _enter_room_camera_lock() -> void:
+	if _room_camera_lock_active:
+		_apply_room_camera_lock_view()
+		return
+
+	_room_camera_lock_active = true
+	_update_room_camera_lock_entry_yaw()
+	_set_room_camera_orbit_enabled(false)
+	_apply_room_camera_lock_view()
+	_log_room_camera_lock_entry()
+
+
+func _exit_room_camera_lock() -> void:
+	if not _room_camera_lock_active:
+		return
+
+	_room_camera_lock_active = false
+	_set_room_camera_orbit_enabled(true)
+	var active_camera: Camera3D = _resolve_active_camera()
+	if active_camera != null and active_camera.has_method("clear_fixed_room_view"):
+		active_camera.call("clear_fixed_room_view")
+
+	var camera_orbit_pivot: Node3D = _resolve_camera_orbit_pivot()
+	if camera_orbit_pivot != null:
+		if camera_orbit_pivot.has_method("set_orbit_world_yaw"):
+			camera_orbit_pivot.call("set_orbit_world_yaw", rotation.y)
+		elif camera_orbit_pivot.has_method("reset_orbit"):
+			camera_orbit_pivot.call("reset_orbit")
+
+
+func _update_room_camera_lock_state() -> void:
+	if not room_camera_lock_enabled or not _has_room_camera_lock_zone:
+		if _room_camera_lock_active:
+			_exit_room_camera_lock()
+		return
+
+	var player_position_flat: Vector2 = Vector2(global_position.x, global_position.z)
+	var room_center_flat: Vector2 = Vector2(_room_camera_lock_center.x, _room_camera_lock_center.z)
+	var is_inside_room_lock: bool = player_position_flat.distance_to(room_center_flat) <= _room_camera_lock_radius
+	if is_inside_room_lock:
+		_enter_room_camera_lock()
+		return
+
+	if _room_camera_lock_active:
+		_exit_room_camera_lock()
+
+
 func _capture_camera_orbit_base_rotation() -> void:
 	if _has_camera_orbit_base_horizontal_rotation:
 		return
@@ -708,6 +924,7 @@ func _rotate_camera_clockwise() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	_update_room_camera_lock_state()
 	var position_before_move: Vector3 = global_position
 	var manual_input_direction: Vector2 = _get_manual_movement_input()
 
@@ -730,6 +947,7 @@ func _physics_process(delta: float) -> void:
 	_align_visual_to_ground(delta)
 	_update_visual_motion(delta)
 	_update_terrain_footprints(delta, position_before_move)
+	_update_room_camera_lock_state()
 
 
 func _get_manual_movement_input() -> Vector2:
@@ -1045,13 +1263,15 @@ func _handle_direct_input(delta: float, input_dir: Vector2) -> void:
 		var camera_basis: Basis = movement_camera.global_transform.basis.orthonormalized()
 		var camera_right: Vector3 = camera_basis.x
 		var camera_forward: Vector3 = -camera_basis.z
+		if _room_camera_lock_active:
+			camera_forward = camera_basis.y
 		camera_right.y = 0.0
 		camera_forward.y = 0.0
 		if camera_right.length_squared() > 0.0001:
 			camera_right = camera_right.normalized()
 		if camera_forward.length_squared() > 0.0001:
 			camera_forward = camera_forward.normalized()
-		world_direction = (camera_right * input_dir.x) - (camera_forward * input_dir.y)
+		world_direction = (camera_right * input_dir.x) + (camera_forward * -input_dir.y)
 	else:
 		var player_basis: Basis = global_transform.basis.orthonormalized()
 		world_direction = (player_basis.x * input_dir.x) - (player_basis.z * input_dir.y)

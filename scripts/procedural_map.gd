@@ -153,6 +153,8 @@ class TerrainFootprint:
 @export_range(4, 16) var pixels_per_cell: int = 6
 ## Blur radius in pixels (higher = smoother but less defined plateaus)
 @export_range(0, 20) var blur_radius: int = 5
+## Extra blur radius applied to the wall heightmap mask after wall stamping.
+@export_range(0, 20) var wall_heightmap_blur_radius: int = 3
 ## Grid mesh subdivisions (vertices per cell, higher = smoother terrain)
 @export_range(1, 128) var mesh_subdivisions: int = 48
 ## Hard cap for generated plane subdivisions per axis to keep terrain mesh creation bounded.
@@ -181,10 +183,36 @@ class TerrainFootprint:
 @export_group("Rendering")
 ## Use layered depth rendering for base mesh
 @export var use_layered_depth: bool = true
+## Darkens higher terrain elevations so wall peaks read more clearly than low ground.
+@export_range(0.0, 1.0, 0.01) var terrain_peak_darkness: float = 0.38
+## Strength of the height-based terrain darkening effect.
+@export_range(0.0, 2.0, 0.01) var terrain_peak_darkness_strength: float = 1.0
 
 @export_group("Exploration")
 ## Number of cells around the player that become permanently revealed on the minimap.
 @export_range(0, 6, 1) var exploration_reveal_radius_cells: int = 2
+
+@export_group("Camera Lock Room")
+## Enables one generated room to switch the player into a fixed top-down camera view.
+@export var enable_camera_lock_room: bool = true
+## Color used by the temporary debug perimeter marker for the camera-lock room.
+@export var camera_lock_room_debug_color: Color = Color(0.18, 1.0, 0.35, 0.72)
+## Vertical offset used to lift the debug perimeter slightly above the terrain.
+@export_range(0.0, 4.0, 0.05) var camera_lock_room_debug_height_offset: float = 0.08
+## Width of the projected debug perimeter band.
+@export_range(0.05, 2.0, 0.05) var camera_lock_room_debug_ring_thickness: float = 0.3
+
+@export_group("Overview Camera")
+## Enable the generated top-down overview camera used after loading completes.
+@export var enable_map_overview_camera: bool = true
+## Vertical field of view for the map overview camera.
+@export_range(5.0, 120.0, 0.1) var map_overview_camera_fov: float = 37.85
+## Extra framing margin added around the generated terrain when fitting the overview camera.
+@export_range(0.0, 64.0, 0.1) var map_overview_camera_padding_world: float = 12.0
+## Minimum height of the overview camera above the map.
+@export_range(1.0, 512.0, 0.1) var map_overview_camera_min_height: float = 42.0
+## Near clip used by the overview camera.
+@export_range(0.01, 32.0, 0.01) var map_overview_camera_near: float = 2.0
 
 @export_group("Footprints")
 ## Enable simple fading footprints on the terrain shader.
@@ -366,6 +394,9 @@ var _heightmap_blur_helper: Object = null
 var _explored_cells: Dictionary = {}
 var _exploration_player: Node3D = null
 var _last_exploration_player_grid_key: String = ""
+var _map_overview_camera: Camera3D = null
+var _previous_active_camera: Camera3D = null
+var _camera_lock_room_index: int = -1
 
 # Materials
 var _base_material: StandardMaterial3D
@@ -551,6 +582,8 @@ func _get_generation_yield_heightmap_blend_interval() -> int:
 
 func _finalize_regeneration() -> void:
 	_is_regenerating = false
+	_update_map_overview_camera()
+	_spawn_camera_lock_debug_marker()
 	var total_duration_usec: int = Time.get_ticks_usec() - _generation_log_started_usec
 	_append_generation_log_line(
 		"DONE",
@@ -617,6 +650,8 @@ func _clear_map() -> void:
 	_debug_heightmap_overlay_texture = null
 	_wall_heightmap_texture = null
 	_wall_heightmap_image = null
+	_previous_active_camera = null
+	_camera_lock_room_index = -1
 
 
 func _reset_persistent_terrain_nodes() -> void:
@@ -749,6 +784,8 @@ func _generate_rooms() -> void:
 		
 		attempts += 1
 
+	_select_camera_lock_room()
+
 
 func _generate_rooms_async() -> void:
 	var playable_width: float = map_width - (edge_margin * 2 * cell_size)
@@ -814,6 +851,8 @@ func _generate_rooms_async() -> void:
 
 	if not pending_room_indices.is_empty():
 		await _flush_room_visualization_batch(pending_room_indices)
+
+	_select_camera_lock_room()
 
 
 ## Generates grid of cells.
@@ -2755,6 +2794,7 @@ func _generate_wall_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	var image: Image = Image.create(tex_width, tex_height, false, Image.FORMAT_RF)
 	image.fill(Color(0, 0, 0, 1))
 	image = _apply_wall_heightmap_blend(image, cells, terrain_grid_rect)
+	image = _apply_wall_heightmap_post_blur(image)
 	_wall_heightmap_image = image
 
 	return ImageTexture.create_from_image(image)
@@ -2840,6 +2880,9 @@ func _generate_wall_heightmap_texture_async(cells: Array[Cell]) -> ImageTexture:
 	_begin_generation_scope("wall_heightmap.apply_blend")
 	image = await _apply_wall_heightmap_blend_async(image, cells, terrain_grid_rect)
 	_end_generation_scope("wall_heightmap.apply_blend", "cells=%d tex=%dx%d" % [cells.size(), tex_width, tex_height])
+	_begin_generation_scope("wall_heightmap.post_blur")
+	image = await _apply_wall_heightmap_post_blur_async(image)
+	_end_generation_scope("wall_heightmap.post_blur")
 	_wall_heightmap_image = image
 
 	_begin_generation_scope("wall_heightmap.create_texture")
@@ -3241,6 +3284,20 @@ func _apply_gaussian_blur_async(source_image: Image, radius: int, blur_bounds: R
 	return result_image
 
 
+func _apply_wall_heightmap_post_blur(source_image: Image) -> Image:
+	if wall_heightmap_blur_radius <= 0:
+		return source_image
+
+	return _apply_gaussian_blur(source_image, wall_heightmap_blur_radius)
+
+
+func _apply_wall_heightmap_post_blur_async(source_image: Image) -> Image:
+	if wall_heightmap_blur_radius <= 0:
+		return source_image
+
+	return await _apply_gaussian_blur_async(source_image, wall_heightmap_blur_radius)
+
+
 ## Creates a subdivided plane mesh for terrain
 func _create_terrain_mesh() -> MeshInstance3D:
 	var mesh_instance: MeshInstance3D = _get_or_create_terrain_mesh_instance()
@@ -3323,6 +3380,8 @@ uniform float metallic_value = 0.0;
 uniform float specular_value = 0.0;
 uniform float bottom_darkness = 0.45;
 uniform float depth_gradient_strength = 1.0;
+uniform float terrain_peak_darkness = 0.38;
+uniform float terrain_peak_darkness_strength = 1.0;
 uniform float darkness_noise_scale = 18.0;
 uniform float darkness_noise_strength = 0.16;
 uniform float footprint_lifetime = 5.0;
@@ -3422,14 +3481,16 @@ void fragment() {
 	float noise_offset = (combined_noise - 0.5) * darkness_noise_strength;
 	float depth_factor = clamp((1.0 - combined_height_value) * depth_gradient_strength + noise_offset, 0.0, 1.0);
 	vec3 depth_tint = mix(vec3(bottom_darkness), vec3(1.0), 1.0 - depth_factor);
+	float peak_darkness_factor = clamp(combined_height_value * terrain_peak_darkness_strength, 0.0, 1.0);
+	vec3 peak_tint = mix(vec3(1.0), vec3(terrain_peak_darkness), peak_darkness_factor);
 	float footprint_mask = 0.0;
 %s
 	float slope_mask = smoothstep(0.2, 0.7, terrain_upness);
 	float final_footprint_mask = clamp(footprint_mask * slope_mask, 0.0, 1.0);
 	vec3 footprint_tint = vec3(1.0 - footprint_strength * final_footprint_mask);
 	float debug_overlay_mask = clamp(texture(debug_overlay, heightmap_uv).r * debug_overlay_strength * debug_overlay_color.a, 0.0, 1.0);
-	vec3 base_albedo = albedo_color.rgb * depth_tint * footprint_tint;
-	vec3 base_emission = emission_color.rgb * emission_energy * depth_tint * footprint_tint;
+	vec3 base_albedo = albedo_color.rgb * depth_tint * peak_tint * footprint_tint;
+	vec3 base_emission = emission_color.rgb * emission_energy * depth_tint * peak_tint * footprint_tint;
 
 	// Apply shared surface material properties
 	ALBEDO = mix(base_albedo, debug_overlay_color.rgb, debug_overlay_mask);
@@ -3460,6 +3521,8 @@ func _configure_terrain_displacement_material(shader_material: ShaderMaterial, t
 	shader_material.set_shader_parameter("footprint_strength", terrain_footprint_strength)
 	shader_material.set_shader_parameter("debug_overlay_color", heightmap_corner_dot_color)
 	shader_material.set_shader_parameter("debug_overlay_strength", 1.0 if _should_show_heightmap_corner_dots() else 0.0)
+	shader_material.set_shader_parameter("terrain_peak_darkness", terrain_peak_darkness)
+	shader_material.set_shader_parameter("terrain_peak_darkness_strength", terrain_peak_darkness_strength)
 	
 	print("[Terrain Shader] Material properties from solid_ground_material:")
 	if _base_material != null:
@@ -3579,6 +3642,8 @@ func _sync_ground_surface_material_parameters(force_sync: bool = false) -> void:
 
 	if _terrain_shader_material != null:
 		_apply_ground_surface_parameters_to_terrain_shader(_terrain_shader_material)
+		_terrain_shader_material.set_shader_parameter("terrain_peak_darkness", terrain_peak_darkness)
+		_terrain_shader_material.set_shader_parameter("terrain_peak_darkness_strength", terrain_peak_darkness_strength)
 
 	_sync_spawned_wall_surface_materials()
 	_sync_spawned_base_platform_materials()
@@ -3590,6 +3655,102 @@ func _sync_ground_surface_material_parameters(force_sync: bool = false) -> void:
 	_last_ground_roughness = ground_roughness
 	_last_ground_metallic = ground_metallic
 	_last_ground_specular = ground_specular
+
+
+func _get_or_create_map_overview_camera() -> Camera3D:
+	if _map_overview_camera != null and is_instance_valid(_map_overview_camera):
+		return _map_overview_camera
+
+	_map_overview_camera = Camera3D.new()
+	_map_overview_camera.name = "MapOverviewCamera"
+	_map_overview_camera.top_level = true
+	_map_overview_camera.current = false
+	add_child(_map_overview_camera)
+	return _map_overview_camera
+
+
+func _update_map_overview_camera() -> void:
+	if not enable_map_overview_camera:
+		if _map_overview_camera != null and is_instance_valid(_map_overview_camera):
+			_map_overview_camera.queue_free()
+			_map_overview_camera = null
+		return
+
+	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
+	if terrain_world_rect.size.x <= 0.0 or terrain_world_rect.size.y <= 0.0:
+		return
+
+	var overview_camera: Camera3D = _get_or_create_map_overview_camera()
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	var viewport_aspect_ratio: float = 1.0
+	if viewport_size.y > 0.001:
+		viewport_aspect_ratio = maxf(viewport_size.x / viewport_size.y, 0.001)
+
+	var vertical_half_span_scale: float = tan(deg_to_rad(map_overview_camera_fov * 0.5))
+	var horizontal_half_span_scale: float = vertical_half_span_scale * viewport_aspect_ratio
+	var half_width: float = (terrain_world_rect.size.x * 0.5) + map_overview_camera_padding_world
+	var half_depth: float = (terrain_world_rect.size.y * 0.5) + map_overview_camera_padding_world
+	var required_height_from_depth: float = map_overview_camera_min_height
+	var required_height_from_width: float = map_overview_camera_min_height
+	if vertical_half_span_scale > 0.001:
+		required_height_from_depth = half_depth / vertical_half_span_scale
+	if horizontal_half_span_scale > 0.001:
+		required_height_from_width = half_width / horizontal_half_span_scale
+
+	var overview_height: float = maxf(map_overview_camera_min_height, maxf(required_height_from_depth, required_height_from_width))
+	var terrain_center: Vector3 = Vector3(
+		terrain_world_rect.position.x + (terrain_world_rect.size.x * 0.5),
+		_get_map_overview_focus_height(),
+		terrain_world_rect.position.y + (terrain_world_rect.size.y * 0.5)
+	)
+
+	overview_camera.fov = map_overview_camera_fov
+	overview_camera.near = map_overview_camera_near
+	overview_camera.far = maxf(overview_height * 4.0, 256.0)
+	overview_camera.global_position = terrain_center + Vector3.UP * overview_height
+	overview_camera.global_rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)
+
+
+func _get_map_overview_focus_height() -> float:
+	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
+	if terrain_world_rect.size.x <= 0.0 or terrain_world_rect.size.y <= 0.0:
+		return floor_height
+
+	var sample_center: Vector2 = Vector2(
+		terrain_world_rect.position.x + (terrain_world_rect.size.x * 0.5),
+		terrain_world_rect.position.y + (terrain_world_rect.size.y * 0.5)
+	)
+	return _get_world_surface_height(sample_center)
+
+
+func activate_map_overview_camera() -> bool:
+	if not enable_map_overview_camera:
+		return false
+
+	_update_map_overview_camera()
+	if _map_overview_camera == null or not is_instance_valid(_map_overview_camera):
+		return false
+
+	var current_camera: Camera3D = get_viewport().get_camera_3d()
+	if current_camera != null and current_camera != _map_overview_camera:
+		_previous_active_camera = current_camera
+
+	_map_overview_camera.current = true
+	return true
+
+
+func restore_primary_camera() -> void:
+	if _previous_active_camera != null and is_instance_valid(_previous_active_camera):
+		_previous_active_camera.current = true
+		return
+
+	var player_node: Node = get_tree().get_first_node_in_group("player")
+	if player_node == null:
+		return
+
+	var fallback_camera: Camera3D = player_node.get_node_or_null("SpringArmPivot/Camera3D") as Camera3D
+	if fallback_camera != null:
+		fallback_camera.current = true
 
 
 func _sync_spawned_wall_surface_materials() -> void:
@@ -3916,6 +4077,161 @@ func _check_floor_world(world_pos: Vector3) -> Dictionary:
 			return {"is_floor": true}
 	
 	return {"is_floor": false}
+
+
+func get_camera_lock_room_data() -> Dictionary:
+	if not enable_camera_lock_room:
+		return {}
+	if _camera_lock_room_index < 0 or _camera_lock_room_index >= _rooms.size():
+		return {}
+
+	var camera_lock_room: Room = _rooms[_camera_lock_room_index]
+	var defined_room_grid_center: Vector2 = _world_to_grid(camera_lock_room.position)
+	var resolved_room_grid_center: Vector2 = _get_camera_lock_room_resolved_grid_center(camera_lock_room, defined_room_grid_center)
+	var room_center_world_xz: Vector2 = _get_camera_lock_room_center_world_xz(camera_lock_room, resolved_room_grid_center)
+	var surface_height: float = _get_world_surface_height(room_center_world_xz)
+	var local_center: Vector3 = Vector3(room_center_world_xz.x, surface_height, room_center_world_xz.y)
+	return {
+		"room_index": _camera_lock_room_index,
+		"defined_grid_center": defined_room_grid_center,
+		"resolved_grid_center": resolved_room_grid_center,
+		"center": to_global(local_center),
+		"radius": camera_lock_room.radius
+	}
+
+
+func _get_camera_lock_room_center_world_xz(room: Room, resolved_room_grid_center: Vector2) -> Vector2:
+	var resolved_cell: Cell = _get_cell_at(resolved_room_grid_center)
+	if resolved_cell != null and resolved_cell.is_floor:
+		var resolved_cell_world: Vector3 = _cell_to_world(resolved_cell.position)
+		return Vector2(resolved_cell_world.x, resolved_cell_world.z)
+
+	return room.position
+
+
+func _get_camera_lock_room_resolved_grid_center(room: Room, defined_room_grid_center: Vector2) -> Vector2:
+	var center_cell: Cell = _get_cell_at(defined_room_grid_center)
+	if center_cell != null and center_cell.is_floor:
+		return center_cell.position
+
+	var nearest_floor_cell: Cell = _find_nearest_floor_cell_for_room(room, defined_room_grid_center)
+	if nearest_floor_cell != null:
+		return nearest_floor_cell.position
+
+	return defined_room_grid_center
+
+
+func _find_nearest_floor_cell_for_room(room: Room, room_center_grid: Vector2) -> Cell:
+	var grid_bounds: Rect2i = _get_room_grid_bounds(room)
+	var nearest_floor_cell: Cell = null
+	var nearest_distance: float = INF
+	for y in range(grid_bounds.position.y, grid_bounds.end.y):
+		for x in range(grid_bounds.position.x, grid_bounds.end.x):
+			var candidate_cell: Cell = _get_cell_at(Vector2(x, y))
+			if candidate_cell == null or not candidate_cell.is_floor:
+				continue
+
+			var candidate_distance: float = candidate_cell.position.distance_to(room_center_grid)
+			if candidate_distance < nearest_distance:
+				nearest_distance = candidate_distance
+				nearest_floor_cell = candidate_cell
+
+	return nearest_floor_cell
+
+
+func _select_camera_lock_room() -> void:
+	_camera_lock_room_index = -1
+	if not enable_camera_lock_room or _rooms.is_empty():
+		return
+
+	if _rooms.size() > 1:
+		_camera_lock_room_index = 1
+		return
+
+	_camera_lock_room_index = 0
+
+
+func _spawn_camera_lock_debug_marker() -> void:
+	if not enable_camera_lock_room:
+		return
+
+	var room_data: Dictionary = get_camera_lock_room_data()
+	if room_data.is_empty():
+		return
+
+	var center_variant: Variant = room_data.get("center", Vector3.ZERO)
+	if not center_variant is Vector3:
+		return
+
+	var radius: float = float(room_data.get("radius", 0.0))
+	if radius <= 0.0:
+		return
+
+	var debug_center: Vector3 = center_variant
+	var ring_mesh: ArrayMesh = _build_camera_lock_debug_ring_mesh(radius, camera_lock_room_debug_ring_thickness)
+
+	var debug_material: StandardMaterial3D = StandardMaterial3D.new()
+	debug_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	debug_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	debug_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	debug_material.albedo_color = camera_lock_room_debug_color
+	debug_material.emission_enabled = true
+	debug_material.emission = camera_lock_room_debug_color
+	debug_material.emission_energy_multiplier = 2.4
+
+	var debug_marker: MeshInstance3D = MeshInstance3D.new()
+	debug_marker.name = "CameraLockRoomDebugMarker"
+	debug_marker.mesh = ring_mesh
+	debug_marker.material_override = debug_material
+	debug_marker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	debug_marker.global_position = debug_center + Vector3.UP * camera_lock_room_debug_height_offset
+	add_child(debug_marker)
+	_spawned_objects.append(debug_marker)
+
+
+func _build_camera_lock_debug_ring_mesh(radius: float, band_width: float) -> ArrayMesh:
+	var safe_radius: float = maxf(radius, 0.05)
+	var half_band_width: float = maxf(band_width * 0.5, 0.01)
+	var inner_radius: float = maxf(safe_radius - half_band_width, 0.01)
+	var outer_radius: float = safe_radius + half_band_width
+	var segment_count: int = 64
+	var vertices: PackedVector3Array = PackedVector3Array()
+	var normals: PackedVector3Array = PackedVector3Array()
+	var uvs: PackedVector2Array = PackedVector2Array()
+	var indices: PackedInt32Array = PackedInt32Array()
+
+	for segment_index in range(segment_count):
+		var angle: float = (float(segment_index) / float(segment_count)) * TAU
+		var direction: Vector2 = Vector2.RIGHT.rotated(angle)
+		vertices.append(Vector3(direction.x * outer_radius, 0.0, direction.y * outer_radius))
+		vertices.append(Vector3(direction.x * inner_radius, 0.0, direction.y * inner_radius))
+		normals.append(Vector3.UP)
+		normals.append(Vector3.UP)
+		uvs.append(Vector2(1.0, 0.0))
+		uvs.append(Vector2(0.0, 1.0))
+
+	for segment_index in range(segment_count):
+		var current_outer_index: int = segment_index * 2
+		var current_inner_index: int = current_outer_index + 1
+		var next_outer_index: int = ((segment_index + 1) % segment_count) * 2
+		var next_inner_index: int = next_outer_index + 1
+		indices.append(current_outer_index)
+		indices.append(next_outer_index)
+		indices.append(current_inner_index)
+		indices.append(current_inner_index)
+		indices.append(next_outer_index)
+		indices.append(next_inner_index)
+
+	var mesh_arrays: Array = []
+	mesh_arrays.resize(Mesh.ARRAY_MAX)
+	mesh_arrays[Mesh.ARRAY_VERTEX] = vertices
+	mesh_arrays[Mesh.ARRAY_NORMAL] = normals
+	mesh_arrays[Mesh.ARRAY_TEX_UV] = uvs
+	mesh_arrays[Mesh.ARRAY_INDEX] = indices
+
+	var ring_mesh: ArrayMesh = ArrayMesh.new()
+	ring_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, mesh_arrays)
+	return ring_mesh
 
 
 func _rebuild_room_floor_lookup() -> void:

@@ -4,6 +4,16 @@ extends Camera3D
 @export var easing: float = 10.0
 @export_range(0.0, 1.0, 0.01) var position_ease_blend: float = 0.35
 
+@export_group("Room Lock")
+@export_range(0.1, 20.0, 0.1) var room_lock_position_ease: float = 5.5
+@export_range(0.1, 20.0, 0.1) var room_lock_rotation_ease: float = 6.5
+@export_range(0.1, 20.0, 0.1) var room_lock_dof_lerp_speed: float = 4.0
+@export var room_lock_dof_far_distance: float = 120.0
+@export var room_lock_dof_blur_amount: float = 0.04
+@export_range(0.1, 20.0, 0.1) var room_lock_fog_lerp_speed: float = 3.5
+@export var room_lock_fog_height_density: float = 0.0
+@export var room_lock_volumetric_fog_density: float = 0.015
+
 @export_group("Screen Shake")
 @export_range(0.0, 4.0, 0.01) var screenshake_strength: float = 0.0
 @export_range(0.0, 4.0, 0.01) var lava_screenshake_strength: float = 0.45
@@ -31,12 +41,30 @@ var _smoothed_global_position: Vector3 = Vector3.ZERO
 var _base_rotation: Vector3 = Vector3.ZERO
 var _screenshake_time: float = 0.0
 var _current_screenshake_strength: float = 0.0
+var _room_lock_active: bool = false
+var _room_lock_target_position: Vector3 = Vector3.ZERO
+var _room_lock_target_rotation: Vector3 = Vector3.ZERO
+var _camera_attributes_practical: CameraAttributesPractical = null
+var _base_dof_blur_far_distance: float = 0.0
+var _base_dof_blur_amount: float = 0.0
+var _base_h_offset: float = 0.0
+var _base_v_offset: float = 0.0
+var _world_environment_node: WorldEnvironment = null
+var _active_environment: Environment = null
+var _base_fog_enabled: bool = false
+var _base_volumetric_fog_enabled: bool = false
+var _base_fog_height_density: float = 0.0
+var _base_volumetric_fog_density: float = 0.0
 
 
 func _ready() -> void:
 	_resolve_spring_arm()
 	_smoothed_global_position = global_position
 	_base_rotation = rotation
+	_base_h_offset = h_offset
+	_base_v_offset = v_offset
+	_capture_base_dof_settings()
+	_capture_base_environment_fog_settings()
 	_resolve_perimeter_fog_height_target()
 	_resolve_procedural_map()
 	_ensure_perimeter_fog_ring()
@@ -44,8 +72,30 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_update_room_lock_dof(delta)
+	_update_room_lock_fog(delta)
+
+	if _room_lock_active:
+		if not top_level:
+			top_level = true
+
+		var position_weight: float = clamp(room_lock_position_ease * delta, 0.0, 1.0)
+		var rotation_weight: float = clamp(room_lock_rotation_ease * delta, 0.0, 1.0)
+		_smoothed_global_position = _smoothed_global_position.lerp(_room_lock_target_position, position_weight)
+		global_position = _smoothed_global_position
+		global_rotation = Vector3(
+			lerp_angle(global_rotation.x, _room_lock_target_rotation.x, rotation_weight),
+			lerp_angle(global_rotation.y, _room_lock_target_rotation.y, rotation_weight),
+			lerp_angle(global_rotation.z, _room_lock_target_rotation.z, rotation_weight)
+		)
+		_update_perimeter_fog_ring()
+		return
+
 	if spring_arm == null or not is_instance_valid(spring_arm):
 		_resolve_spring_arm()
+
+	if top_level:
+		top_level = false
 
 	if spring_arm == null:
 		rotation = _base_rotation
@@ -218,3 +268,99 @@ func _update_perimeter_fog_ring() -> void:
 	_perimeter_fog_material.set_shader_parameter("density", perimeter_fog_density)
 	_perimeter_fog_material.set_shader_parameter("vertical_fade_start", vertical_fade_start)
 	_perimeter_fog_material.set_shader_parameter("vertical_fade_end", vertical_fade_end)
+
+
+func set_fixed_room_view(target_global_position: Vector3, target_global_rotation: Vector3) -> void:
+	_room_lock_active = true
+	_room_lock_target_position = target_global_position
+	_room_lock_target_rotation = target_global_rotation
+	_smoothed_global_position = global_position
+	h_offset = 0.0
+	v_offset = 0.0
+
+
+func clear_fixed_room_view() -> void:
+	if not _room_lock_active:
+		return
+
+	_room_lock_active = false
+	_smoothed_global_position = global_position
+	h_offset = _base_h_offset
+	v_offset = _base_v_offset
+
+
+func is_fixed_room_view_active() -> bool:
+	return _room_lock_active
+
+
+func _capture_base_dof_settings() -> void:
+	_camera_attributes_practical = attributes as CameraAttributesPractical
+	if _camera_attributes_practical == null:
+		return
+
+	_base_dof_blur_far_distance = _camera_attributes_practical.dof_blur_far_distance
+	_base_dof_blur_amount = _camera_attributes_practical.dof_blur_amount
+
+
+func _update_room_lock_dof(delta: float) -> void:
+	if _camera_attributes_practical == null:
+		_capture_base_dof_settings()
+		if _camera_attributes_practical == null:
+			return
+
+	var target_far_distance: float = _base_dof_blur_far_distance
+	var target_blur_amount: float = _base_dof_blur_amount
+	if _room_lock_active:
+		target_far_distance = maxf(room_lock_dof_far_distance, _base_dof_blur_far_distance)
+		target_blur_amount = minf(room_lock_dof_blur_amount, _base_dof_blur_amount)
+
+	var dof_weight: float = clamp(room_lock_dof_lerp_speed * delta, 0.0, 1.0)
+	_camera_attributes_practical.dof_blur_far_enabled = true
+	_camera_attributes_practical.dof_blur_far_distance = lerpf(_camera_attributes_practical.dof_blur_far_distance, target_far_distance, dof_weight)
+	_camera_attributes_practical.dof_blur_amount = lerpf(_camera_attributes_practical.dof_blur_amount, target_blur_amount, dof_weight)
+
+
+func _capture_base_environment_fog_settings() -> void:
+	_world_environment_node = _resolve_world_environment_node()
+	if _world_environment_node == null:
+		return
+
+	_active_environment = _world_environment_node.environment
+	if _active_environment == null:
+		return
+
+	_base_fog_enabled = _active_environment.fog_enabled
+	_base_volumetric_fog_enabled = _active_environment.volumetric_fog_enabled
+	_base_fog_height_density = _active_environment.fog_height_density
+	_base_volumetric_fog_density = _active_environment.volumetric_fog_density
+
+
+func _resolve_world_environment_node() -> WorldEnvironment:
+	if _world_environment_node != null and is_instance_valid(_world_environment_node):
+		return _world_environment_node
+
+	var current_scene: Node = get_tree().current_scene
+	if current_scene == null:
+		return null
+
+	_world_environment_node = current_scene.find_child("WorldEnvironment", true, false) as WorldEnvironment
+	return _world_environment_node
+
+
+func _update_room_lock_fog(delta: float) -> void:
+	if _active_environment == null:
+		_capture_base_environment_fog_settings()
+		if _active_environment == null:
+			return
+
+	var target_fog_height_density: float = _base_fog_height_density
+	var target_volumetric_fog_density: float = _base_volumetric_fog_density
+	if _room_lock_active:
+		target_fog_height_density = room_lock_fog_height_density
+		target_volumetric_fog_density = room_lock_volumetric_fog_density
+
+	var fog_weight: float = clamp(room_lock_fog_lerp_speed * delta, 0.0, 1.0)
+	_active_environment.fog_enabled = _base_fog_enabled
+	_active_environment.volumetric_fog_enabled = _base_volumetric_fog_enabled
+	_active_environment.fog_height_density = lerpf(_active_environment.fog_height_density, target_fog_height_density, fog_weight)
+	_active_environment.volumetric_fog_density = lerpf(_active_environment.volumetric_fog_density, target_volumetric_fog_density, fog_weight)

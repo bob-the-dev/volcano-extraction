@@ -3,9 +3,9 @@
 [resource]
 shading_mode = 2
 diffuse_mode = 1
-albedo_color = Color(0.16087088, 0.20410672, 0.29603824, 1)
+albedo_color = Color(0.09498306, 0.1253263, 0.18882218, 1)
 metallic_specular = 0.0
 roughness = 0.41
 emission_enabled = true
-emission = Color(1, 1, 1, 1)
+emission = Color(0.46193212, 0.119613476, 0.102107845, 1)
 emission_energy_multiplier = 0.07

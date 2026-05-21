@@ -24,6 +24,7 @@ const PROGRESS_BAR_CORNER_RADIUS: int = 16
 var _game_scene: Node = null
 var _waiting_for_continue: bool = false
 var _continue_requested: bool = false
+var _previewing_generated_map: bool = false
 
 
 func _toggle_fullscreen_mode() -> void:
@@ -113,6 +114,8 @@ func _boot_game() -> void:
 	var hud_layer: CanvasLayer = _game_scene.get_node_or_null("HUD") as CanvasLayer
 	if procedural_map != null and "regenerate_on_ready" in procedural_map:
 		procedural_map.regenerate_on_ready = false
+	if procedural_map != null and "enable_loading_generation_visualization" in procedural_map:
+		procedural_map.enable_loading_generation_visualization = true
 
 	if _game_scene is Node3D:
 		(_game_scene as Node3D).visible = false
@@ -133,9 +136,12 @@ func _boot_game() -> void:
 		_show_loading_status("Finalizing setup", GENERATION_PROGRESS_END)
 		await get_tree().process_frame
 
+	_show_generated_map_preview(procedural_map)
+
 	_show_loading_status(READY_PROMPT, 1.0)
 	await get_tree().process_frame
 	await _wait_for_continue()
+	_restore_primary_camera(procedural_map)
 
 	if _game_scene is Node3D:
 		(_game_scene as Node3D).visible = true
@@ -180,6 +186,27 @@ func _show_loading_error(message: String) -> void:
 	_waiting_for_continue = false
 	_show_loading_status(message, 1.0)
 	push_error(message)
+
+
+func _show_generated_map_preview(procedural_map: Node) -> void:
+	if _game_scene is Node3D:
+		(_game_scene as Node3D).visible = true
+
+	if _generation_visualizer != null:
+		_generation_visualizer.visible = false
+
+	_background_rect.color = Color(_background_rect.color.r, _background_rect.color.g, _background_rect.color.b, 0.0)
+	_previewing_generated_map = false
+	if procedural_map != null and procedural_map.has_method("activate_map_overview_camera"):
+		_previewing_generated_map = bool(procedural_map.call("activate_map_overview_camera"))
+
+
+func _restore_primary_camera(procedural_map: Node) -> void:
+	if not _previewing_generated_map:
+		return
+
+	if procedural_map != null and procedural_map.has_method("restore_primary_camera"):
+		procedural_map.call("restore_primary_camera")
 
 
 func _apply_random_loading_palette() -> void:
