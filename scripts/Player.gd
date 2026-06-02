@@ -240,7 +240,7 @@ func _log_camera_orbit(message: String) -> void:
 func _ready() -> void:
 	# Add to player group for easy lookup
 	add_to_group("player")
-	_footstep_rng.randomize()
+	_sync_footstep_rng_to_procedural_seed()
 	_camera_orbit_pivot = _resolve_camera_orbit_pivot()
 	_apply_camera_drag_settings_to_pivot()
 	_camera_orbit_rig = _resolve_camera_orbit_rig()
@@ -271,6 +271,8 @@ func _ready() -> void:
 			print("[Player] WARNING: Could not find procedural map!")
 	else:
 		print("[Player] Procedural map already assigned: ", procedural_map.name)
+
+	_sync_footstep_rng_to_procedural_seed()
 	
 	# Connect to map regeneration signal and initialize when map is ready
 	if procedural_map:
@@ -305,10 +307,19 @@ func _ready() -> void:
 
 ## Called when the map regenerates
 func _on_map_regenerated() -> void:
+	_sync_footstep_rng_to_procedural_seed()
 	if debug_movement:
 		print("Map regenerated - rebuilding pathfinding")
 	_initialize_pathfinding()
 	_refresh_room_camera_lock_data()
+
+
+func _sync_footstep_rng_to_procedural_seed() -> void:
+	if procedural_map != null and "random_seed" in procedural_map:
+		_footstep_rng.seed = int(procedural_map.random_seed) + 100003
+		return
+
+	_footstep_rng.seed = 100003
 
 
 ## Initialize pathfinding grid from procedural map
@@ -488,48 +499,65 @@ func _grid_to_world(grid_pos: Vector2) -> Vector3:
 ## Find path from current position to target using A* with weighted costs (Dijkstra-style)
 ## Lava tiles have much higher cost and will be avoided unless necessary
 func _find_path(from_world: Vector3, to_world: Vector3) -> Array[Vector3]:
+	return _find_path_internal(from_world, to_world, true)
+
+
+func find_path_for_world_positions(from_world: Vector3, to_world: Vector3, emit_logs: bool = false) -> Array[Vector3]:
+	return _find_path_internal(from_world, to_world, emit_logs)
+
+
+func _find_path_internal(from_world: Vector3, to_world: Vector3, emit_logs: bool) -> Array[Vector3]:
 	var path: Array[Vector3] = []
 	
 	if not _pathfinding_initialized:
-		print("[Pathfinding] ERROR: Pathfinding not initialized yet")
+		if emit_logs:
+			print("[Pathfinding] ERROR: Pathfinding not initialized yet")
 		return path
 
 	_refresh_pathfinding_costs()
 	var current_lava_height_level: float = _get_current_lava_height_level()
 	
-	print("[Pathfinding] Finding path from ", from_world, " to ", to_world)
+	if emit_logs:
+		print("[Pathfinding] Finding path from ", from_world, " to ", to_world)
 	
 	var from_grid := _world_to_grid(from_world)
 	var to_grid := _world_to_grid(to_world)
 	
-	print("[Pathfinding] Grid coords - from: ", from_grid, " to: ", to_grid)
+	if emit_logs:
+		print("[Pathfinding] Grid coords - from: ", from_grid, " to: ", to_grid)
 	
 	var from_id := _grid_to_id(from_grid)
 	var to_id := _grid_to_id(to_grid)
 	
-	print("[Pathfinding] Point IDs - from: ", from_id, " to: ", to_id)
+	if emit_logs:
+		print("[Pathfinding] Point IDs - from: ", from_id, " to: ", to_id)
 	
 	# Check if both positions are valid walkable cells
 	if not _astar.has_point(from_id):
-		print("[Pathfinding] ERROR: Start position not on walkable grid: ", from_grid, " (ID: ", from_id, ")")
+		if emit_logs:
+			print("[Pathfinding] ERROR: Start position not on walkable grid: ", from_grid, " (ID: ", from_id, ")")
 		return path
 	
 	if not _astar.has_point(to_id):
-		print("[Pathfinding] Target position not on walkable grid: ", to_grid, " - searching for nearest...")
+		if emit_logs:
+			print("[Pathfinding] Target position not on walkable grid: ", to_grid, " - searching for nearest...")
 		
 		# Find nearest walkable cell to target
 		to_id = _find_nearest_walkable_point(to_grid)
 		if to_id == -1:
-			print("[Pathfinding] ERROR: No walkable cells found near target")
+			if emit_logs:
+				print("[Pathfinding] ERROR: No walkable cells found near target")
 			return path
 		
-		print("[Pathfinding] Found nearest walkable point ID: ", to_id)
+		if emit_logs:
+			print("[Pathfinding] Found nearest walkable point ID: ", to_id)
 	
 	# Get path from AStar (uses Dijkstra-style weighted pathfinding)
 	var grid_path := _astar.get_point_path(from_id, to_id)
 	
 	if grid_path.is_empty():
-		print("[Pathfinding] ERROR: No path found from ", from_grid, " to ", to_grid)
+		if emit_logs:
+			print("[Pathfinding] ERROR: No path found from ", from_grid, " to ", to_grid)
 		return path
 	
 	# Convert grid path to world positions and count currently submerged cells.
@@ -542,11 +570,12 @@ func _find_path(from_world: Vector3, to_world: Vector3) -> Array[Vector3]:
 		if _is_depth_submerged(depth, current_lava_height_level):
 			submerged_tiles_in_path += 1
 	
-	print("[Pathfinding] ✓ Path found with ", path.size(), " waypoints")
-	if submerged_tiles_in_path > 0:
-		print("[Pathfinding]   ⚠ Path crosses ", submerged_tiles_in_path, " currently submerged cells")
-	else:
-		print("[Pathfinding]   ✓ Path avoids all currently submerged cells")
+	if emit_logs:
+		print("[Pathfinding] ✓ Path found with ", path.size(), " waypoints")
+		if submerged_tiles_in_path > 0:
+			print("[Pathfinding]   ⚠ Path crosses ", submerged_tiles_in_path, " currently submerged cells")
+		else:
+			print("[Pathfinding]   ✓ Path avoids all currently submerged cells")
 	
 	return path
 

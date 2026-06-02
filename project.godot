@@ -27,6 +27,7 @@ PhantomCameraManager="*uid://duq6jhf6unyis"
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
+window/per_pixel_transparency/allowed=true
 
 [dotnet]
 
@@ -89,4 +90,6 @@ common/physics_interpolation=true
 
 [rendering]
 
+anti_aliasing/quality/msaa_2d=2
+anti_aliasing/quality/msaa_3d=2
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)

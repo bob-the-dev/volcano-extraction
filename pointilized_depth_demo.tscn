@@ -1,0 +1,94 @@
+[gd_scene format=3 uid="uid://bdm20h4b8xhxm"]
+
+[ext_resource type="Shader" uid="uid://dfgi52xcy1g2i" path="res://shaders/node_depth_pointilized.gdshader" id="1_point_shader"]
+
+[sub_resource type="Environment" id="Environment_white"]
+background_mode = 1
+background_color = Color(1, 1, 1, 1)
+ambient_light_source = 2
+ambient_light_color = Color(1, 1, 1, 1)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_green"]
+render_priority = 0
+shader = ExtResource("1_point_shader")
+shader_parameter/base_color = Color(0.18, 0.66, 0.25, 1)
+shader_parameter/tint_color = Color(0.98, 0.82, 0.36, 1)
+shader_parameter/use_albedo_texture = false
+shader_parameter/effect_start_depth = 3.0
+shader_parameter/effect_end_depth = 10.0
+shader_parameter/flatten_strength = 1.0
+shader_parameter/near_dot_density = 16.0
+shader_parameter/far_dot_density = 7.0
+shader_parameter/near_fill_ratio = 1.0
+shader_parameter/far_fill_ratio = 0.38
+shader_parameter/circles_per_cell = 3
+shader_parameter/edge_softness = 0.04
+shader_parameter/horizontal_scatter = 0.28
+shader_parameter/vertical_scatter = 0.08
+shader_parameter/color_noise_strength = 0.05
+shader_parameter/tint_strength = 0.24
+shader_parameter/emission_strength = 0.15
+shader_parameter/debug_effect_override = -1.0
+shader_parameter/debug_view_mode = 0
+shader_parameter/debug_disable_discard = false
+
+[sub_resource type="BoxMesh" id="BoxMesh_demo"]
+size = Vector3(1.4, 1.4, 1.4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_red"]
+albedo_color = Color(0.81, 0.14, 0.1, 1)
+roughness = 0.78
+
+[node name="PointilizedDepthDemo" type="Node3D" unique_id=1838170124]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=44225353]
+environment = SubResource("Environment_white")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=246926279]
+transform = Transform3D(0.81915206, -0.4262504, 0.38379753, 0, 0.66913056, 0.74314487, -0.57357645, -0.6087487, 0.54811966, 0, 6, 6)
+light_energy = 1.8
+shadow_enabled = true
+shadow_opacity = 0.25
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=377022502]
+transform = Transform3D(1, 0, 0, 0, 0.9848078, 0.1736482, 0, -0.1736482, 0.9848078, -2.371338, 0.47076106, 3.0479736)
+current = true
+fov = 61.875
+far = 40.0
+
+[node name="FocusPoint" type="Marker3D" parent="." unique_id=2004747260]
+
+[node name="GreenNear" type="MeshInstance3D" parent="." unique_id=130605918]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.699121, 0, 0.2)
+material_override = SubResource("ShaderMaterial_green")
+mesh = SubResource("BoxMesh_demo")
+
+[node name="GreenMid" type="MeshInstance3D" parent="." unique_id=847066099]
+transform = Transform3D(0.9135454, 0.084565304, 0.3978485, 0, 0.9781476, -0.2079117, -0.40673664, 0.18993679, 0.8935823, 0.2, 0.5, -4.2)
+material_override = SubResource("ShaderMaterial_green")
+mesh = SubResource("BoxMesh_demo")
+
+[node name="GreenFar" type="MeshInstance3D" parent="." unique_id=58869594]
+transform = Transform3D(0.8470628, -0.2807602, -0.45128503, 0.16692135, 0.94665796, -0.27563736, 0.5046006, 0.15815306, 0.8487437, -0.8755615, -1.730957, 1.6486721)
+material_override = SubResource("ShaderMaterial_green")
+mesh = SubResource("BoxMesh_demo")
+
+[node name="RedFront" type="MeshInstance3D" parent="." unique_id=705105637]
+transform = Transform3D(0.95105654, 0, 0.309017, 0, 1, 0, -0.309017, 0, 0.95105654, 2.1, -1.1, 2.8)
+material_override = SubResource("StandardMaterial3D_red")
+mesh = SubResource("BoxMesh_demo")
+
+[node name="RedMiddleLeft" type="MeshInstance3D" parent="." unique_id=1142738041]
+transform = Transform3D(0.93479896, -0.20452353, -0.29038098, 0.098224625, 0.9345449, -0.34202012, 0.34132525, 0.2911975, 0.89370084, -4.4, 0.8, -2.8)
+material_override = SubResource("StandardMaterial3D_red")
+mesh = SubResource("BoxMesh_demo")
+
+[node name="RedMiddleRight" type="MeshInstance3D" parent="." unique_id=824374425]
+transform = Transform3D(0.9802483, 0.10130662, 0.16985355, -0.13613184, 0.96862835, 0.2079117, -0.14346212, -0.22692756, 0.96328735, 4.7, -0.4, -5.6)
+material_override = SubResource("StandardMaterial3D_red")
+mesh = SubResource("BoxMesh_demo")
+
+[node name="RedFar" type="MeshInstance3D" parent="." unique_id=624352357]
+transform = Transform3D(0.7431448, 0.093124986, 0.6626187, 0, 0.99026805, -0.1391731, -0.6691306, 0.10342577, 0.73591256, -1.4, 1.2, -10.2)
+material_override = SubResource("StandardMaterial3D_red")
+mesh = SubResource("BoxMesh_demo")

@@ -1,0 +1,17 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://cgixdl0jok8g2"]
+
+[ext_resource type="Shader" uid="uid://dpu52x6666olf" path="res://shaders/minimap_terrain.gdshader" id="1_minimap_terrain_shader"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_minimap_terrain_shader")
+shader_parameter/amplitude = 1.0
+shader_parameter/wall_amplitude = 0.0
+shader_parameter/heightmap_texel_size = Vector2(0.01, 0.01)
+shader_parameter/low_color = Color(0.08, 0.11, 0.18, 1)
+shader_parameter/high_color = Color(0.18, 0.22, 0.29, 1)
+shader_parameter/ridge_color = Color(0.23507437, 0.25813103, 0.27592075, 1)
+shader_parameter/mask_uv_origin = Vector2(0, 0)
+shader_parameter/mask_uv_size = Vector2(1, 1)
+shader_parameter/reveal_softness = 0.5
+shader_parameter/slope_strength = 1.17

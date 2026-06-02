@@ -1,0 +1,31 @@
+[gd_scene format=3 uid="uid://cvtn63cqrlakk"]
+
+[ext_resource type="Script" uid="uid://cm2sl01kure6" path="res://scripts/stranded_visitor.gd" id="1_visitor_script"]
+[ext_resource type="PackedScene" uid="uid://dp4dtin18drb7" path="res://blender/fatman.fbx" id="2_fatman"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_body"]
+radius = 0.4296875
+height = 0.9553711
+
+[node name="StrandedVisitor" type="CharacterBody3D" unique_id=1098168147]
+floor_constant_speed = true
+floor_snap_length = 0.3
+script = ExtResource("1_visitor_script")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=495805461]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35502914, 0)
+shape = SubResource("CapsuleShape3D_body")
+
+[node name="VisualRoot" type="Node3D" parent="." unique_id=1278287201]
+
+[node name="Fatman" parent="VisualRoot" unique_id=1472936193 instance=ExtResource("2_fatman")]
+transform = Transform3D(-3.059797e-07, 0, -7, 0, 7, 0, 7, 0, -3.059797e-07, 0, -0.125, 0)
+
+[node name="PromptLabel" type="Label3D" parent="." unique_id=1327262088]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.35, 0)
+visible = false
+billboard = 1
+modulate = Color(1, 0.947, 0.72, 1)
+text = "Press Space to help"
+font_size = 64
+outline_size = 8

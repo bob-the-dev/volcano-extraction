@@ -2,9 +2,9 @@
 
 [ext_resource type="PackedScene" uid="uid://bknmich6p0hft" path="res://player.tscn" id="2_0xm2m"]
 [ext_resource type="PackedScene" uid="uid://dp4dtin18drb7" path="res://blender/fatman.fbx" id="3_7mycd"]
+[ext_resource type="PackedScene" uid="uid://ctxrcf4c6x3i6" path="res://eruptor.tscn" id="4_7mycd"]
 [ext_resource type="Script" uid="uid://djs5e7lkbo60e" path="res://scripts/procedural_map.gd" id="7_5vw27"]
-[ext_resource type="Script" uid="uid://b3qjvkvof5wv4" path="res://CSharpBootstrap.cs" id="7_272bh"]
-[ext_resource type="Script" uid="uid://lvdibt8falnc" path="res://scripts/Minimap.gd" id="8_minimap"]
+[ext_resource type="Script" uid="uid://cdkhe57p5tim2" path="res://scripts/ViewportMinimap.gd" id="8_minimap"]
 [ext_resource type="Script" uid="uid://cjwi6sdjl523b" path="res://scripts/WaterControls.gd" id="9_lava_controls"]
 
 [sub_resource type="Environment" id="Environment_c5lsl"]
@@ -29,6 +29,7 @@ fog_light_color = Color(0.36282933, 0.36282954, 0.36282933, 1)
 fog_density = 1.0
 fog_depth_curve = 0.42044845
 volumetric_fog_enabled = true
+volumetric_fog_length = 12.0
 volumetric_fog_temporal_reprojection_amount = 0.533
 adjustment_enabled = true
 adjustment_contrast = 1.25
@@ -79,9 +80,9 @@ max_map_size = 240.0
 median_rooms = 24
 edge_margin = 8
 enable_loading_generation_visualization = false
-terrain_perimeter_cells = 3
-num_lava_sources = 4
-num_highground = 3
+terrain_perimeter_cells = 4
+num_highground = 5
+depth_source_influence = 3.0
 depth_step_height = 0.25
 pixels_per_cell = 16
 blur_radius = 20
@@ -94,7 +95,8 @@ wall_heightmap_blend_strength = 0.47
 wall_heightmap_blend_radius_cells = 1.55
 wall_heightmap_peak_offset_cells = 0.32
 export_heightmap_debug = true
-terrain_peak_darkness = 0.34
+terrain_peak_darkness = 0.6
+terrain_peak_darkness_strength = 2.0
 exploration_reveal_radius_cells = 4
 map_overview_camera_padding_world = 18.0
 map_overview_camera_near = 8.799999999999999
@@ -104,6 +106,8 @@ terrain_footprint_lifetime = 11.0
 terrain_footprint_overflow_fade_duration = 1.5
 terrain_footprint_strength = 0.47
 deepest_point_scene = ExtResource("3_7mycd")
+eruptor_scene = ExtResource("4_7mycd")
+eruptor_scene_height_offset = 1.5
 deepest_point_scene_height_offset = -0.3
 lava_height_level = 3.25
 lava_auto_rise_enabled = true
@@ -111,8 +115,9 @@ lava_rise_speed_levels_per_second = 0.1
 debug_loop_rising_lava = true
 lava_surface_offset = 0.125
 lava_surface_min_margin_world = 100.0
-scatter_internal_walls = false
-debug_internal_walls = false
+internal_wall_noise_scale = 0.75
+internal_wall_noise_threshold = 0.59
+internal_wall_min_floor_neighbors = 2
 heightmap_corner_dot_radius_pixels = 0.1
 heightmap_corner_dot_inset_cells = 0.01
 heightmap_corner_dot_color = Color(1.2390978, 1.2520355, 1.2649733, 0.6)
@@ -152,15 +157,15 @@ text = "Lower Lava"
 layout_mode = 3
 anchors_preset = 0
 script = ExtResource("8_minimap")
-minimap_size = 200
-border_margin = 4
-wall_color = Color(0, 0, 0, 0)
-floor_color = Color(0.97473055, 0.33887592, 1.1551381e-06, 0.3137255)
-background_color = Color(0, 0, 0, 0)
-player_color = Color(0, 0, 0, 1)
-player_dot_size = 1
-lava_source_dot_size = 1
-highground_dot_size = 1
-
-[node name="CSharpBootstrap" type="Node" parent="." unique_id=405113497]
-script = ExtResource("7_272bh")
+minimap_size = 400
+border_margin = 3
+camera_padding_world = 3.0
+minimap_camera_height = 25.0
+reveal_radius_cells_override = 8
+revealed_edge_softness = 0.5
+player_reveal_softness_cells = 2.0
+terrain_albedo_color = Color(0.32104075, 0.3750087, 0.4179261, 1)
+lava_albedo_color = Color(1, 0.4392157, 0.03137255, 0.7529412)
+player_indicator_color = Color(3.128499e-07, 0.29779246, 0.42663527, 0.7764706)
+player_heading_color = Color(0.98039216, 0.7921569, 0.1882353, 1)
+player_heading_length = 22.0

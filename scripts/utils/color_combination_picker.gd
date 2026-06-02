@@ -42,11 +42,11 @@ static func get_combination_ids_for_color(color_identifier: Variant) -> Array[in
 	return combination_ids
 
 
-static func get_random_combination() -> Dictionary:
+static func get_random_combination(rng_seed: int = -1) -> Dictionary:
 	if not _ensure_loaded():
 		return {}
 
-	var combination_id: int = get_random_combination_id()
+	var combination_id: int = get_random_combination_id(rng_seed)
 	if combination_id < 0:
 		return {}
 
@@ -56,7 +56,7 @@ static func get_random_combination() -> Dictionary:
 	}
 
 
-static func get_random_combination_for_color(color_identifier: Variant) -> Dictionary:
+static func get_random_combination_for_color(color_identifier: Variant, rng_seed: int = -1) -> Dictionary:
 	if not _ensure_loaded():
 		return {}
 
@@ -64,8 +64,7 @@ static func get_random_combination_for_color(color_identifier: Variant) -> Dicti
 	if available_ids.is_empty():
 		return {}
 
-	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
-	rng.randomize()
+	var rng: RandomNumberGenerator = _build_rng(rng_seed)
 	var selection_index: int = rng.randi_range(0, available_ids.size() - 1)
 	var combination_id: int = available_ids[selection_index]
 	return {
@@ -74,14 +73,22 @@ static func get_random_combination_for_color(color_identifier: Variant) -> Dicti
 	}
 
 
-static func get_random_combination_id() -> int:
+static func get_random_combination_id(rng_seed: int = -1) -> int:
 	if not _ensure_loaded() or _combination_ids.is_empty():
 		return -1
 
-	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
-	rng.randomize()
+	var rng: RandomNumberGenerator = _build_rng(rng_seed)
 	var selection_index: int = rng.randi_range(0, _combination_ids.size() - 1)
 	return _combination_ids[selection_index]
+
+
+static func _build_rng(rng_seed: int) -> RandomNumberGenerator:
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	if rng_seed >= 0:
+		rng.seed = rng_seed
+	else:
+		rng.randomize()
+	return rng
 
 
 static func get_max_combination_id() -> int:

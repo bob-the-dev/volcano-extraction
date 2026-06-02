@@ -1,0 +1,18 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://bkw2p2qr57g00"]
+
+[ext_resource type="Shader" uid="uid://dlmju7ax6pphx" path="res://shaders/minimap_lava.gdshader" id="1_minimap_lava_shader"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_minimap_lava_shader")
+shader_parameter/mask_uv_origin = Vector2(0, 0)
+shader_parameter/mask_uv_size = Vector2(1, 1)
+shader_parameter/reveal_softness = 0.14
+shader_parameter/lava_color = Color(0, 0, 0, 0.65)
+shader_parameter/deep_lava_color = Color(1, 0.48, 0.04, 0.95)
+shader_parameter/caustic_color = Color(0.44, 0.1, 0, 1)
+shader_parameter/molten_scale = Vector2(18, 15)
+shader_parameter/molten_speed = Vector2(1.6, 1.1)
+shader_parameter/caustic_scale = 24.0
+shader_parameter/caustic_speed = 2.2
+shader_parameter/caustic_strength = 0.28

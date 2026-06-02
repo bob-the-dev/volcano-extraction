@@ -25,6 +25,7 @@ var _game_scene: Node = null
 var _waiting_for_continue: bool = false
 var _continue_requested: bool = false
 var _previewing_generated_map: bool = false
+var _loading_palette_seed: int = 0
 
 
 func _toggle_fullscreen_mode() -> void:
@@ -37,7 +38,6 @@ func _toggle_fullscreen_mode() -> void:
 
 
 func _ready() -> void:
-	_apply_random_loading_palette()
 	_title_label.text = LOADING_TITLE
 	_progress_bar.value = 0.0
 	if _generation_visualizer != null and _generation_visualizer.has_method("reset_visualization"):
@@ -112,10 +112,11 @@ func _boot_game() -> void:
 	_game_scene = main_scene.instantiate()
 	var procedural_map: Node = _game_scene.get_node_or_null("Procedural Map")
 	var hud_layer: CanvasLayer = _game_scene.get_node_or_null("HUD") as CanvasLayer
+	if procedural_map != null and procedural_map.has_method("prepare_generation_seed"):
+		_loading_palette_seed = int(procedural_map.call("prepare_generation_seed"))
+	_apply_random_loading_palette(_loading_palette_seed)
 	if procedural_map != null and "regenerate_on_ready" in procedural_map:
 		procedural_map.regenerate_on_ready = false
-	if procedural_map != null and "enable_loading_generation_visualization" in procedural_map:
-		procedural_map.enable_loading_generation_visualization = true
 
 	if _game_scene is Node3D:
 		(_game_scene as Node3D).visible = false
@@ -209,8 +210,8 @@ func _restore_primary_camera(procedural_map: Node) -> void:
 		procedural_map.call("restore_primary_camera")
 
 
-func _apply_random_loading_palette() -> void:
-	var combination_result: Dictionary = ColorCombinationPickerScript.get_random_combination()
+func _apply_random_loading_palette(palette_seed: int) -> void:
+	var combination_result: Dictionary = ColorCombinationPickerScript.get_random_combination(palette_seed)
 	if combination_result.is_empty():
 		return
 
@@ -230,13 +231,13 @@ func _apply_random_loading_palette() -> void:
 		_background_rect.color = ColorCombinationPickerScript.get_color(darkest_entry)
 	_populate_color_banner(sorted_colors)
 
-	var visualization_palette: Dictionary = _build_visualization_palette(sorted_colors)
+	var visualization_palette: Dictionary = _build_visualization_palette(sorted_colors, palette_seed)
 	if _generation_visualizer != null and _generation_visualizer.has_method("apply_palette"):
 		_generation_visualizer.call("apply_palette", visualization_palette)
 	_apply_progress_palette(visualization_palette)
 
 
-func _build_visualization_palette(sorted_colors: Array[Dictionary]) -> Dictionary:
+func _build_visualization_palette(sorted_colors: Array[Dictionary], palette_seed: int) -> Dictionary:
 	var background_color: Color = ColorCombinationPickerScript.get_color(sorted_colors[0])
 	var non_background_colors: Array[Color] = []
 	for color_index in range(1, sorted_colors.size()):
@@ -245,7 +246,7 @@ func _build_visualization_palette(sorted_colors: Array[Dictionary]) -> Dictionar
 	if non_background_colors.is_empty():
 		non_background_colors.append(background_color.inverted())
 
-	non_background_colors.shuffle()
+	_shuffle_color_array_with_seed(non_background_colors, palette_seed + 1)
 
 	var remaining_colors: Array[Color] = non_background_colors.duplicate()
 	var wall_color: Color = _take_next_palette_color(remaining_colors, _palette_color_at(non_background_colors, 0))
@@ -273,6 +274,19 @@ func _build_visualization_palette(sorted_colors: Array[Dictionary]) -> Dictionar
 		"floor_darkest_cell_color": square_dark_color,
 		"lava_tint_color": _with_alpha(lava_color, 0.98)
 	}
+
+
+func _shuffle_color_array_with_seed(colors: Array[Color], palette_seed: int) -> void:
+	if colors.size() <= 1:
+		return
+
+	var palette_rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	palette_rng.seed = palette_seed
+	for index in range(colors.size() - 1, 0, -1):
+		var swap_index: int = palette_rng.randi_range(0, index)
+		var swap_color: Color = colors[index]
+		colors[index] = colors[swap_index]
+		colors[swap_index] = swap_color
 
 
 func _palette_color_at(colors: Array[Color], index: int) -> Color:

@@ -7,6 +7,8 @@ extends Node3D
 signal map_regenerated()
 signal generation_stage_changed(step_index: int, step_count: int, title: String, description: String)
 signal generation_visualization_updated(snapshot: Dictionary)
+signal stranded_visitor_spawned(visitor: Node3D)
+signal player_extracted()
 
 # Constants
 const DEFAULT_TERRAIN_PERIMETER_CELLS: int = 2
@@ -33,6 +35,7 @@ const WALL_HEIGHTMAP_PEAK_STRENGTH_RATIO: float = 0.82
 const WALL_HEIGHTMAP_BASE_STRENGTH_RATIO: float = 0.58
 const GENERATION_LOG_PATH: String = "res://procedural_generation.log"
 const HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH: String = "res://scripts/utils/HeightmapBlurHelper.cs"
+const ERUPTOR_BLOB_COMPOSITE_SCRIPT_PATH: String = "res://scripts/eruptor_blob_composite.gd"
 
 # Inner classes
 class Room:
@@ -135,8 +138,20 @@ class TerrainFootprint:
 		terrain_perimeter_cells = value
 		if not Engine.is_editor_hint() and is_inside_tree() and not _is_regenerating:
 			call_deferred("_regenerate_map")
+## Base depth assigned to the synthetic outer terrain collar.
+@export_range(0, 4, 1) var terrain_perimeter_depth_level: int = OUTER_TERRAIN_PERIMETER_DEPTH:
+	set(value):
+		terrain_perimeter_depth_level = value
+		if not Engine.is_editor_hint() and is_inside_tree() and not _is_regenerating:
+			call_deferred("_regenerate_map")
 
 @export_group("Depth Sources")
+## Base depth assigned to non-walkable wall cells before wall-height displacement is added on top.
+@export_range(0, 4, 1) var wall_depth_level: int = 0:
+	set(value):
+		wall_depth_level = value
+		if not Engine.is_editor_hint() and is_inside_tree() and not _is_regenerating:
+			call_deferred("_regenerate_map")
 ## Number of rooms to designate as lava sources (depth 4 centers)
 @export var num_lava_sources: int = 2
 ## Number of rooms to designate as highground (depth 0 centers)
@@ -187,6 +202,18 @@ class TerrainFootprint:
 @export_range(0.0, 1.0, 0.01) var terrain_peak_darkness: float = 0.38
 ## Strength of the height-based terrain darkening effect.
 @export_range(0.0, 2.0, 0.01) var terrain_peak_darkness_strength: float = 1.0
+
+@export_group("Particle Collision")
+## Build a heightfield particle collider from the generated terrain mesh.
+@export var terrain_particle_heightfield_collision_enabled: bool = true
+## Resolution used for the generated particle heightfield collider.
+@export_enum("256", "512", "1024", "2048", "4096") var terrain_particle_heightfield_resolution: int = 2
+## Update the terrain particle heightfield every frame instead of only when moved.
+@export var terrain_particle_heightfield_update_always: bool = false
+## Make the terrain particle heightfield follow the active camera.
+@export var terrain_particle_heightfield_follow_camera: bool = false
+## Extra vertical coverage added above the generated terrain for particle collision.
+@export_range(0.0, 64.0, 0.5) var terrain_particle_heightfield_vertical_margin: float = 8.0
 
 @export_group("Exploration")
 ## Number of cells around the player that become permanently revealed on the minimap.
@@ -241,8 +268,34 @@ class TerrainFootprint:
 @export_range(0.0, 1.0, 0.01) var terrain_footprint_strength: float = 0.32
 
 @export_group("Scene Spawns")
+## Optional scene to place once in the designated exit room.
+@export var exit_scene: PackedScene = preload("res://exit_point.tscn")
+## Extra world-space height added after sampling the exit room surface.
+@export var exit_scene_height_offset: float = 0.0
+## Optional scene to place once on a safe non-submerged floor cell as the stranded visitor.
+@export var visitor_scene: PackedScene = preload("res://stranded_visitor.tscn")
+## Extra world-space height added after sampling the visitor spawn surface.
+@export var visitor_scene_height_offset: float = 0.0
+## Highest depth level allowed for the stranded visitor spawn. Lower values keep them off the deepest lava floor.
+@export_range(0, 4, 1) var visitor_spawn_max_depth: int = 3
+## Toggle legacy decorative deepest-point scene spawning.
+@export var spawn_deepest_point_scenes_enabled: bool = false
 ## Optional scene to place at each deepest walkable source cell.
 @export var deepest_point_scene: PackedScene = preload("res://fatguy.gltf")
+## Optional scene to place at each lava source after terrain generation.
+@export var eruptor_scene: PackedScene
+## Uniform scale applied to procedurally spawned eruptor scenes.
+@export var eruptor_scene_scale: Vector3 = Vector3.ONE
+## Extra world-space height added to the eruptor root after choosing its spawn surface.
+@export var eruptor_scene_height_offset: float = 2.44
+## Snap eruptor roots to the generated lava surface instead of the sampled terrain surface.
+@export var eruptor_scene_align_to_lava_surface: bool = true
+## Randomize eruptor yaw so repeated spawns do not all face the same direction.
+@export var eruptor_scene_random_yaw: bool = true
+## Spawn the first eruptor near the player start so it is visible immediately.
+@export var eruptor_scene_spawn_near_player_start: bool = true
+## Horizontal offset applied when spawning the first eruptor near the player start.
+@export var eruptor_scene_player_start_offset: Vector3 = Vector3(6.0, 0.0, 0.0)
 ## Fallback material override for procedurally spawned deepest-point meshes when the player material cannot be resolved.
 @export var deepest_point_material_override: Material = preload("res://materials/player.tres")
 ## Match procedurally spawned deepest-point meshes to the live player material when available.
@@ -313,6 +366,16 @@ class TerrainFootprint:
 @export_range(0.0, 1.0, 0.01) var internal_wall_noise_threshold: float = 0.84
 ## Minimum number of neighboring floor cells required before converting a floor cell into a wall.
 @export_range(0, 8, 1) var internal_wall_min_floor_neighbors: int = 5
+## Minimum full length of a generated wall streak, in cells.
+@export_range(2, 24, 1) var internal_wall_streak_min_length: int = 3
+## Maximum full length of a generated wall streak, in cells.
+@export_range(2, 24, 1) var internal_wall_streak_max_length: int = 7
+## Higher values make wall streaks turn more often instead of marching in straight lines.
+@export_range(0.0, 1.0, 0.01) var internal_wall_streak_snakeiness: float = 0.45
+## Wall streaks cannot occupy cells within this many cells of a room center.
+@export_range(0.0, 8.0, 0.5) var internal_wall_room_center_clearance_cells: float = 2.0
+## Fraction of each room perimeter that may be converted into partial wall segments. 0 disables room-perimeter walls.
+@export_range(0.0, 1.0, 0.01) var room_perimeter_wall_closedness: float = 0.0
 ## Print extra diagnostics for internal wall placement decisions.
 @export var debug_internal_walls: bool = true
 
@@ -364,6 +427,7 @@ var _wall_heightmap_image: Image
 var _lava_volume: MeshInstance3D
 var _displayed_lava_height_level: float = 3.0
 var _target_lava_height_level: float = 3.0
+var _debug_loop_lava_direction: float = -1.0
 var _default_lava_surface_material: ShaderMaterial = preload("res://shaders/psOneLava.tres")
 var _default_lava_orb_material: ShaderMaterial = preload("res://shaders/psOneLavaOrb.tres")
 var _floating_deepest_point_nodes: Array[Node3D] = []
@@ -396,7 +460,11 @@ var _exploration_player: Node3D = null
 var _last_exploration_player_grid_key: String = ""
 var _map_overview_camera: Camera3D = null
 var _previous_active_camera: Camera3D = null
+var _exit_room_index: int = -1
+var _exit_extraction_pending: bool = false
 var _camera_lock_room_index: int = -1
+var _generation_seed_prepared: bool = false
+var _is_preparing_generation_seed: bool = false
 
 # Materials
 var _base_material: StandardMaterial3D
@@ -417,12 +485,85 @@ var num_rooms: int = 12
 func _ready() -> void:
 	# Add to group for easy lookup
 	add_to_group("procedural_map")
+	_ensure_eruptor_blob_hud()
 	_sync_lava_height_state()
 	
 	_base_material = solid_ground_material
 	
 	if regenerate_on_ready and not Engine.is_editor_hint():
 		_regenerate_map()
+
+
+func _ensure_eruptor_blob_hud() -> void:
+	if Engine.is_editor_hint():
+		return
+
+	var parent_node: Node = get_parent()
+	if parent_node == null:
+		print("[Eruptor HUD] ProceduralMap has no parent; skipping HUD attach")
+		return
+
+	var hud_layer: CanvasLayer = parent_node.get_node_or_null("HUD") as CanvasLayer
+	if hud_layer == null:
+		print("[Eruptor HUD] HUD node missing under ", parent_node.get_path())
+		return
+
+	var runtime_debug_label: Label = hud_layer.get_node_or_null("RuntimeHudDebugLabel") as Label
+	if runtime_debug_label == null:
+		runtime_debug_label = Label.new()
+		runtime_debug_label.name = "RuntimeHudDebugLabel"
+		runtime_debug_label.offset_left = 16.0
+		runtime_debug_label.offset_top = 52.0
+		runtime_debug_label.offset_right = 420.0
+		runtime_debug_label.offset_bottom = 84.0
+		runtime_debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		runtime_debug_label.text = "RUNTIME HUD DEBUG"
+		runtime_debug_label.add_theme_color_override("font_color", Color(0.22, 1.0, 0.78, 1.0))
+		runtime_debug_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 1.0))
+		runtime_debug_label.add_theme_constant_override("shadow_offset_x", 2)
+		runtime_debug_label.add_theme_constant_override("shadow_offset_y", 2)
+		hud_layer.add_child(runtime_debug_label)
+
+	var blob_control: Control = hud_layer.get_node_or_null("EruptorBlobComposite") as Control
+	if blob_control == null:
+		blob_control = Control.new()
+		blob_control.name = "EruptorBlobComposite"
+		blob_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		blob_control.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hud_layer.add_child(blob_control)
+
+	var blob_script: GDScript = _load_eruptor_blob_composite_script()
+	if blob_script == null:
+		print("[Eruptor HUD] Failed to load blob script at ", ERUPTOR_BLOB_COMPOSITE_SCRIPT_PATH)
+		return
+
+	if blob_control.get_script() != blob_script:
+		blob_control.set_script(blob_script)
+
+	print("[Eruptor HUD] ensured runtime attach under ", hud_layer.get_path(), " | script=", blob_control.get_script())
+
+
+func _load_eruptor_blob_composite_script() -> GDScript:
+	var script_resource: Resource = load(ERUPTOR_BLOB_COMPOSITE_SCRIPT_PATH)
+	if script_resource is GDScript:
+		return script_resource as GDScript
+
+	return null
+
+
+func prepare_generation_seed() -> int:
+	if _generation_seed_prepared:
+		return random_seed
+
+	if randomize_seed:
+		var seed_rng: RandomNumberGenerator = RandomNumberGenerator.new()
+		seed_rng.randomize()
+		_is_preparing_generation_seed = true
+		random_seed = int(seed_rng.seed)
+		_is_preparing_generation_seed = false
+
+	_generation_seed_prepared = true
+	return random_seed
 
 
 func _process(delta: float) -> void:
@@ -452,12 +593,18 @@ func _regenerate_map() -> void:
 	_begin_generation_scope("spawn_geometry")
 	_spawn_geometry()
 	_end_generation_scope("spawn_geometry", "floors=%d lava_sources=%d highground=%d" % [_floor_cells.size(), _lava_sources.size(), _highground_positions.size()])
-	_begin_generation_scope("spawn_deepest_point_scenes")
-	_spawn_deepest_point_scenes()
-	_end_generation_scope("spawn_deepest_point_scenes", "spawned=%d" % [_lava_sources.size()])
 	_begin_generation_scope("place_player_on_floor")
 	_place_player_on_floor()
 	_end_generation_scope("place_player_on_floor")
+	_begin_generation_scope("spawn_exit_point")
+	_spawn_exit_point()
+	_end_generation_scope("spawn_exit_point")
+	_begin_generation_scope("spawn_stranded_visitor")
+	_spawn_stranded_visitor()
+	_end_generation_scope("spawn_stranded_visitor")
+	_begin_generation_scope("spawn_eruptor_scenes")
+	_spawn_eruptor_scenes()
+	_end_generation_scope("spawn_eruptor_scenes", "spawned=%d" % [_lava_sources.size()])
 	_begin_generation_scope("setup_exploration_tracking")
 	_setup_exploration_tracking()
 	_end_generation_scope("setup_exploration_tracking", "explored_cells=%d" % [_explored_cells.size()])
@@ -520,17 +667,23 @@ func generate_map_with_loading() -> void:
 	await _spawn_geometry_async()
 	_end_generation_scope("spawn_geometry", "floors=%d lava_sources=%d highground=%d" % [_floor_cells.size(), _lava_sources.size(), _highground_positions.size()])
 
-	_emit_generation_stage(8, stage_count, "Launching The Mascot", "Floating our roundest survivor into the danger zone.")
+	_emit_generation_stage(8, stage_count, "Marking The Exit", "Choosing the one doorway the volcano will still count as a legal departure.")
 	await get_tree().process_frame
-	_begin_generation_scope("spawn_deepest_point_scenes")
-	_spawn_deepest_point_scenes()
-	_end_generation_scope("spawn_deepest_point_scenes", "spawned=%d" % [_lava_sources.size()])
+	_begin_generation_scope("spawn_exit_point")
+	_spawn_exit_point()
+	_end_generation_scope("spawn_exit_point")
 
 	_emit_generation_stage(9, stage_count, "Dropping You Somewhere Legal", "Finding a tile that counts as safe enough for paperwork.")
 	await get_tree().process_frame
 	_begin_generation_scope("place_player_on_floor")
 	_place_player_on_floor()
 	_end_generation_scope("place_player_on_floor")
+	_begin_generation_scope("spawn_stranded_visitor")
+	_spawn_stranded_visitor()
+	_end_generation_scope("spawn_stranded_visitor")
+	_begin_generation_scope("spawn_eruptor_scenes")
+	_spawn_eruptor_scenes()
+	_end_generation_scope("spawn_eruptor_scenes", "spawned=%d" % [_lava_sources.size()])
 
 	_emit_generation_stage(10, stage_count, "Teaching The Map To Gossip", "Preparing exploration tracking for every questionable decision ahead.")
 	await get_tree().process_frame
@@ -582,6 +735,7 @@ func _get_generation_yield_heightmap_blend_interval() -> int:
 
 func _finalize_regeneration() -> void:
 	_is_regenerating = false
+	_generation_seed_prepared = false
 	_update_map_overview_camera()
 	_spawn_camera_lock_debug_marker()
 	var total_duration_usec: int = Time.get_ticks_usec() - _generation_log_started_usec
@@ -651,6 +805,8 @@ func _clear_map() -> void:
 	_wall_heightmap_texture = null
 	_wall_heightmap_image = null
 	_previous_active_camera = null
+	_exit_room_index = -1
+	_exit_extraction_pending = false
 	_camera_lock_room_index = -1
 
 
@@ -703,11 +859,8 @@ func _generate_map() -> void:
 func _initialize_generation_state() -> void:
 	# Initialize RNG and noise
 	_rng = RandomNumberGenerator.new()
-	if randomize_seed:
-		_rng.randomize()
-		random_seed = _rng.seed
-	else:
-		_rng.seed = random_seed
+	var generation_seed: int = prepare_generation_seed()
+	_rng.seed = generation_seed
 	
 	_noise = FastNoiseLite.new()
 	_noise.seed = _rng.seed
@@ -778,12 +931,13 @@ func _generate_rooms() -> void:
 				var room := Room.new()
 				room.position = new_pos
 				room.radius = radius
-				room.has_exit = _rng.randf() < 0.2
-				room.type = "exit" if room.has_exit else "base"
+				room.has_exit = false
+				room.type = "base"
 				_rooms.append(room)
 		
 		attempts += 1
 
+	_select_exit_room()
 	_select_camera_lock_room()
 
 
@@ -836,8 +990,8 @@ func _generate_rooms_async() -> void:
 				var room: Room = Room.new()
 				room.position = new_pos
 				room.radius = radius
-				room.has_exit = _rng.randf() < 0.2
-				room.type = "exit" if room.has_exit else "base"
+				room.has_exit = false
+				room.type = "base"
 				_rooms.append(room)
 				added_room = true
 
@@ -852,6 +1006,7 @@ func _generate_rooms_async() -> void:
 	if not pending_room_indices.is_empty():
 		await _flush_room_visualization_batch(pending_room_indices)
 
+	_select_exit_room()
 	_select_camera_lock_room()
 
 
@@ -928,65 +1083,10 @@ func _mark_walls() -> void:
 	if not scatter_internal_walls or _noise == null:
 		if debug_internal_walls:
 			print("[Internal Walls] Skipped. enabled=", scatter_internal_walls, " noise=", _noise != null)
+		_rebuild_surface_lookups()
 		return
 
-	var protected_positions: Dictionary = {}
-	for room in _rooms:
-		var room_center_pos: Vector2 = _world_to_grid(room.position)
-		var room_center_cell: Cell = _get_cell_at(room_center_pos)
-		if room_center_cell != null and room_center_cell.is_floor:
-			protected_positions[_to_grid_lookup_key(room_center_pos)] = true
-
-	var candidate_count: int = 0
-	var protected_count: int = 0
-	var sparse_count: int = 0
-	var below_threshold_count: int = 0
-	var converted_count: int = 0
-	var min_noise_sample: float = INF
-	var max_noise_sample: float = -INF
-
-	for cell in _cells:
-		if not cell.is_floor:
-			continue
-
-		candidate_count += 1
-
-		if protected_positions.has(_to_grid_lookup_key(cell.position)):
-			protected_count += 1
-			continue
-
-		if _count_floor_neighbors(cell.position) < internal_wall_min_floor_neighbors:
-			sparse_count += 1
-			continue
-
-		var noise_sample: float = _get_internal_wall_noise(cell.position)
-		min_noise_sample = minf(min_noise_sample, noise_sample)
-		max_noise_sample = maxf(max_noise_sample, noise_sample)
-		if noise_sample < internal_wall_noise_threshold:
-			below_threshold_count += 1
-			continue
-
-		cell.is_floor = false
-		cell.is_wall = true
-		converted_count += 1
-
-	if min_noise_sample == INF:
-		min_noise_sample = 0.0
-	if max_noise_sample == -INF:
-		max_noise_sample = 0.0
-
-	if debug_internal_walls:
-		print(
-			"[Internal Walls] candidates=", candidate_count,
-			" protected=", protected_count,
-			" sparse=", sparse_count,
-			" below_threshold=", below_threshold_count,
-			" converted=", converted_count,
-			" threshold=", internal_wall_noise_threshold,
-			" noise_range=", Vector2(min_noise_sample, max_noise_sample)
-		)
-
-	_rebuild_surface_lookups()
+	_apply_internal_wall_streaks()
 
 
 func _mark_walls_async() -> void:
@@ -1008,68 +1108,8 @@ func _mark_walls_async() -> void:
 		_rebuild_surface_lookups()
 		return
 
-	var protected_positions: Dictionary = {}
-	for room in _rooms:
-		var room_center_pos: Vector2 = _world_to_grid(room.position)
-		var room_center_cell: Cell = _get_cell_at(room_center_pos)
-		if room_center_cell != null and room_center_cell.is_floor:
-			protected_positions[_to_grid_lookup_key(room_center_pos)] = true
-
-	var candidate_count: int = 0
-	var protected_count: int = 0
-	var sparse_count: int = 0
-	var below_threshold_count: int = 0
-	var converted_count: int = 0
-	var min_noise_sample: float = INF
-	var max_noise_sample: float = -INF
-
-	processed_cell_count = 0
-	for cell in _cells:
-		if not cell.is_floor:
-			continue
-
-		candidate_count += 1
-
-		if protected_positions.has(_to_grid_lookup_key(cell.position)):
-			protected_count += 1
-			continue
-
-		if _count_floor_neighbors(cell.position) < internal_wall_min_floor_neighbors:
-			sparse_count += 1
-			continue
-
-		var noise_sample: float = _get_internal_wall_noise(cell.position)
-		min_noise_sample = minf(min_noise_sample, noise_sample)
-		max_noise_sample = maxf(max_noise_sample, noise_sample)
-		if noise_sample < internal_wall_noise_threshold:
-			below_threshold_count += 1
-			continue
-
-		cell.is_floor = false
-		cell.is_wall = true
-		converted_count += 1
-
-		processed_cell_count += 1
-		if processed_cell_count % cell_yield_interval == 0:
-			await get_tree().process_frame
-
-	if min_noise_sample == INF:
-		min_noise_sample = 0.0
-	if max_noise_sample == -INF:
-		max_noise_sample = 0.0
-
-	if debug_internal_walls:
-		print(
-			"[Internal Walls] candidates=", candidate_count,
-			" protected=", protected_count,
-			" sparse=", sparse_count,
-			" below_threshold=", below_threshold_count,
-			" converted=", converted_count,
-			" threshold=", internal_wall_noise_threshold,
-			" noise_range=", Vector2(min_noise_sample, max_noise_sample)
-		)
-
-	_rebuild_surface_lookups()
+	_apply_internal_wall_streaks()
+	await get_tree().process_frame
 
 
 ## Finalizes the occupied terrain footprint used by generation and rendering.
@@ -1100,8 +1140,7 @@ func _spawn_geometry() -> void:
 	print("[Map] Calculating terrain depths...")
 	for cell in _cells:
 		if cell.is_wall:
-			# Walls always have depth 0
-			cell.depth = 0
+			cell.depth = wall_depth_level
 		else:
 			# Floor and lava cells get calculated depth
 			var distance: float = _distance_to_nearest_wall(cell.position)
@@ -1160,7 +1199,7 @@ func _spawn_geometry_async() -> void:
 	var processed_cell_count: int = 0
 	for cell in _cells:
 		if cell.is_wall:
-			cell.depth = 0
+			cell.depth = wall_depth_level
 		else:
 			var distance: float = _distance_to_nearest_wall(cell.position)
 			cell.depth = _calculate_tile_depth(cell.position, distance, cell.noise_value)
@@ -1226,6 +1265,399 @@ func _get_internal_wall_noise(grid_pos: Vector2) -> float:
 	return (_noise.get_noise_2d(sample_x, sample_y) + 1.0) * 0.5
 
 
+func _get_internal_wall_direction_noise(grid_pos: Vector2) -> float:
+	var sample_x: float = (grid_pos.x + 211.0) * internal_wall_noise_scale
+	var sample_y: float = (grid_pos.y + 307.0) * internal_wall_noise_scale
+	return (_noise.get_noise_2d(sample_x, sample_y) + 1.0) * 0.5
+
+
+func _get_internal_wall_length_noise(grid_pos: Vector2) -> float:
+	var sample_x: float = (grid_pos.x + 503.0) * internal_wall_noise_scale
+	var sample_y: float = (grid_pos.y + 613.0) * internal_wall_noise_scale
+	return (_noise.get_noise_2d(sample_x, sample_y) + 1.0) * 0.5
+
+
+func _get_internal_wall_turn_noise(grid_pos: Vector2, step_index: int) -> float:
+	var sample_x: float = (grid_pos.x + 811.0 + float(step_index) * 0.73) * internal_wall_noise_scale
+	var sample_y: float = (grid_pos.y + 947.0 + float(step_index) * 0.41) * internal_wall_noise_scale
+	return (_noise.get_noise_2d(sample_x, sample_y) + 1.0) * 0.5
+
+
+func _apply_internal_wall_streaks() -> void:
+	var room_centers: Array[Vector2] = _identify_room_centers()
+	var protected_positions: Dictionary = _build_internal_wall_protected_positions(room_centers)
+	var candidate_count: int = 0
+	var protected_count: int = 0
+	var sparse_count: int = 0
+	var below_threshold_count: int = 0
+	var non_peak_count: int = 0
+	var short_streak_count: int = 0
+	var connectivity_rejected_count: int = 0
+	var converted_count: int = 0
+	var room_perimeter_converted_count: int = 0
+	var room_perimeter_rejected_count: int = 0
+	var min_noise_sample: float = INF
+	var max_noise_sample: float = -INF
+
+	for cell: Cell in _cells:
+		if not cell.is_floor:
+			continue
+
+		candidate_count += 1
+
+		var lookup_key: Vector2i = _to_grid_lookup_key(cell.position)
+		if protected_positions.has(lookup_key):
+			protected_count += 1
+			continue
+
+		if _count_floor_neighbors(cell.position) < internal_wall_min_floor_neighbors:
+			sparse_count += 1
+			continue
+
+		var noise_sample: float = _get_internal_wall_noise(cell.position)
+		min_noise_sample = minf(min_noise_sample, noise_sample)
+		max_noise_sample = maxf(max_noise_sample, noise_sample)
+		if noise_sample < internal_wall_noise_threshold:
+			below_threshold_count += 1
+			continue
+
+		if not _is_internal_wall_noise_local_maximum(cell.position, noise_sample):
+			non_peak_count += 1
+			continue
+
+		var streak_cells: Array[Cell] = _collect_internal_wall_streak_cells(cell, protected_positions)
+		if streak_cells.size() < _get_internal_wall_min_streak_length():
+			short_streak_count += 1
+			continue
+
+		if not _are_room_centers_connected_after_wall_conversion(streak_cells, room_centers):
+			connectivity_rejected_count += 1
+			continue
+
+		converted_count += _convert_floor_cells_to_internal_walls(streak_cells)
+
+	var room_perimeter_result: Dictionary = _apply_room_perimeter_wall_segments(room_centers, protected_positions)
+	room_perimeter_converted_count = int(room_perimeter_result.get("converted", 0))
+	room_perimeter_rejected_count = int(room_perimeter_result.get("connectivity_rejected", 0))
+	converted_count += room_perimeter_converted_count
+	connectivity_rejected_count += room_perimeter_rejected_count
+
+	if min_noise_sample == INF:
+		min_noise_sample = 0.0
+	if max_noise_sample == -INF:
+		max_noise_sample = 0.0
+
+	if debug_internal_walls:
+		print(
+			"[Internal Walls] candidates=", candidate_count,
+			" protected=", protected_count,
+			" sparse=", sparse_count,
+			" below_threshold=", below_threshold_count,
+			" non_peak=", non_peak_count,
+			" short_streaks=", short_streak_count,
+			" perimeter_converted=", room_perimeter_converted_count,
+			" perimeter_rejected=", room_perimeter_rejected_count,
+			" connectivity_rejected=", connectivity_rejected_count,
+			" converted=", converted_count,
+			" threshold=", internal_wall_noise_threshold,
+			" noise_range=", Vector2(min_noise_sample, max_noise_sample)
+		)
+
+	_rebuild_surface_lookups()
+
+
+func _build_internal_wall_protected_positions(room_centers: Array[Vector2]) -> Dictionary:
+	var protected_positions: Dictionary = {}
+	var room_center_clearance: float = maxf(internal_wall_room_center_clearance_cells, 0.0)
+	var search_radius: int = int(ceili(room_center_clearance))
+	for room_center: Vector2 in room_centers:
+		var room_center_key: Vector2i = _to_grid_lookup_key(room_center)
+		for x_offset in range(-search_radius, search_radius + 1):
+			for y_offset in range(-search_radius, search_radius + 1):
+				var offset_vector: Vector2 = Vector2(float(x_offset), float(y_offset))
+				if offset_vector.length() > room_center_clearance + 0.001:
+					continue
+
+				protected_positions[room_center_key + Vector2i(x_offset, y_offset)] = true
+
+	return protected_positions
+
+
+func _is_internal_wall_noise_local_maximum(grid_pos: Vector2, noise_sample: float) -> bool:
+	var origin: Vector2i = _to_grid_lookup_key(grid_pos)
+	for neighbor_offset: Vector2i in _get_all_grid_neighbor_offsets():
+		var neighbor_grid_pos: Vector2i = origin + neighbor_offset
+		var neighbor_cell: Cell = _get_cell_at(Vector2(float(neighbor_grid_pos.x), float(neighbor_grid_pos.y)))
+		if neighbor_cell == null or not neighbor_cell.is_floor:
+			continue
+
+		var neighbor_noise_sample: float = _get_internal_wall_noise(neighbor_cell.position)
+		if neighbor_noise_sample > noise_sample:
+			return false
+
+	return true
+
+
+func _collect_internal_wall_streak_cells(seed_cell: Cell, protected_positions: Dictionary) -> Array[Cell]:
+	var streak_cells: Array[Cell] = [seed_cell]
+	var claimed_positions: Dictionary = {_to_grid_lookup_key(seed_cell.position): true}
+	var streak_direction: Vector2i = _get_internal_wall_streak_direction(seed_cell.position)
+	var target_length: int = _get_internal_wall_target_streak_length(seed_cell.position)
+	var current_cell: Cell = seed_cell
+	for step_index in range(1, target_length):
+		var direction_priority: Array[Vector2i] = _get_internal_wall_direction_priority(current_cell.position, streak_direction, step_index)
+		var next_cell: Cell = null
+		for candidate_direction: Vector2i in direction_priority:
+			var candidate_cell: Cell = _get_internal_wall_next_snake_cell(current_cell.position, candidate_direction, protected_positions, claimed_positions)
+			if candidate_cell != null:
+				next_cell = candidate_cell
+				streak_direction = candidate_direction
+				break
+
+		if next_cell == null:
+			break
+
+		streak_cells.append(next_cell)
+		claimed_positions[_to_grid_lookup_key(next_cell.position)] = true
+		current_cell = next_cell
+
+	return streak_cells
+
+
+func _get_internal_wall_streak_direction(grid_pos: Vector2) -> Vector2i:
+	var direction_noise: float = _get_internal_wall_direction_noise(grid_pos)
+	if direction_noise < 0.25:
+		return Vector2i.RIGHT
+	if direction_noise < 0.5:
+		return Vector2i.DOWN
+	if direction_noise < 0.75:
+		return Vector2i.LEFT
+	return Vector2i.UP
+
+
+func _get_internal_wall_direction_priority(grid_pos: Vector2, current_direction: Vector2i, step_index: int) -> Array[Vector2i]:
+	var left_direction: Vector2i = _rotate_grid_direction_left(current_direction)
+	var right_direction: Vector2i = _rotate_grid_direction_right(current_direction)
+	var turn_noise: float = _get_internal_wall_turn_noise(grid_pos, step_index)
+	var turn_margin: float = clampf(internal_wall_streak_snakeiness, 0.0, 1.0) * 0.33
+	if turn_noise <= turn_margin:
+		return [left_direction, current_direction, right_direction]
+	if turn_noise >= 1.0 - turn_margin:
+		return [right_direction, current_direction, left_direction]
+	return [current_direction, left_direction, right_direction]
+
+
+func _get_internal_wall_next_snake_cell(grid_pos: Vector2, direction: Vector2i, protected_positions: Dictionary, claimed_positions: Dictionary) -> Cell:
+	var candidate_key: Vector2i = _to_grid_lookup_key(grid_pos) + direction
+	if protected_positions.has(candidate_key) or claimed_positions.has(candidate_key):
+		return null
+
+	var candidate_cell: Cell = _get_cell_at(Vector2(float(candidate_key.x), float(candidate_key.y)))
+	if candidate_cell == null or not candidate_cell.is_floor:
+		return null
+	if _count_floor_neighbors(candidate_cell.position) < internal_wall_min_floor_neighbors:
+		return null
+
+	return candidate_cell
+
+
+func _rotate_grid_direction_left(direction: Vector2i) -> Vector2i:
+	return Vector2i(direction.y, -direction.x)
+
+
+func _rotate_grid_direction_right(direction: Vector2i) -> Vector2i:
+	return Vector2i(-direction.y, direction.x)
+
+
+func _get_internal_wall_target_streak_length(grid_pos: Vector2) -> int:
+	var min_length: int = _get_internal_wall_min_streak_length()
+	var max_length: int = _get_internal_wall_max_streak_length()
+	if max_length <= min_length:
+		return min_length
+
+	var length_noise: float = _get_internal_wall_length_noise(grid_pos)
+	return min_length + int(round(length_noise * float(max_length - min_length)))
+
+
+func _get_internal_wall_min_streak_length() -> int:
+	return maxi(mini(internal_wall_streak_min_length, internal_wall_streak_max_length), 2)
+
+
+func _get_internal_wall_max_streak_length() -> int:
+	return maxi(maxi(internal_wall_streak_min_length, internal_wall_streak_max_length), 2)
+
+
+func _are_room_centers_connected_after_wall_conversion(candidate_cells: Array[Cell], room_centers: Array[Vector2]) -> bool:
+	if room_centers.size() <= 1:
+		return true
+
+	var blocked_positions: Dictionary = {}
+	for candidate_cell: Cell in candidate_cells:
+		blocked_positions[_to_grid_lookup_key(candidate_cell.position)] = true
+
+	var start_key: Vector2i = _to_grid_lookup_key(room_centers[0])
+	if blocked_positions.has(start_key):
+		return false
+
+	var visited_positions: Dictionary = {start_key: true}
+	var queue: Array[Vector2i] = [start_key]
+	var queue_index: int = 0
+	var cardinal_offsets: Array[Vector2i] = _get_cardinal_grid_neighbor_offsets()
+	while queue_index < queue.size():
+		var current_key: Vector2i = queue[queue_index]
+		queue_index += 1
+
+		for neighbor_offset: Vector2i in cardinal_offsets:
+			var neighbor_key: Vector2i = current_key + neighbor_offset
+			if blocked_positions.has(neighbor_key) or visited_positions.has(neighbor_key):
+				continue
+
+			var neighbor_cell: Cell = _get_cell_at(Vector2(float(neighbor_key.x), float(neighbor_key.y)))
+			if neighbor_cell == null or not neighbor_cell.is_floor:
+				continue
+
+			visited_positions[neighbor_key] = true
+			queue.append(neighbor_key)
+
+	for room_center: Vector2 in room_centers:
+		if not visited_positions.has(_to_grid_lookup_key(room_center)):
+			return false
+
+	return true
+
+
+func _convert_floor_cells_to_internal_walls(candidate_cells: Array[Cell]) -> int:
+	var converted_count: int = 0
+	for candidate_cell: Cell in candidate_cells:
+		if candidate_cell == null or not candidate_cell.is_floor:
+			continue
+
+		candidate_cell.is_floor = false
+		candidate_cell.is_wall = true
+		var lookup_key: Vector2i = _to_grid_lookup_key(candidate_cell.position)
+		_floor_lookup.erase(lookup_key)
+		_wall_lookup[lookup_key] = true
+		converted_count += 1
+
+	return converted_count
+
+
+func _apply_room_perimeter_wall_segments(room_centers: Array[Vector2], protected_positions: Dictionary) -> Dictionary:
+	var result: Dictionary = {
+		"converted": 0,
+		"connectivity_rejected": 0,
+	}
+	if room_perimeter_wall_closedness <= 0.0:
+		return result
+
+	for room: Room in _rooms:
+		var perimeter_segment: Array[Cell] = _collect_room_perimeter_wall_segment(room, protected_positions)
+		if perimeter_segment.is_empty():
+			continue
+
+		if not _are_room_centers_connected_after_wall_conversion(perimeter_segment, room_centers):
+			result["connectivity_rejected"] = int(result.get("connectivity_rejected", 0)) + 1
+			continue
+
+		result["converted"] = int(result.get("converted", 0)) + _convert_floor_cells_to_internal_walls(perimeter_segment)
+
+	return result
+
+
+func _collect_room_perimeter_wall_segment(room: Room, protected_positions: Dictionary) -> Array[Cell]:
+	var perimeter_cells: Array[Cell] = _get_room_perimeter_floor_cells(room)
+	if perimeter_cells.is_empty():
+		return []
+
+	var sorted_perimeter_cells: Array[Cell] = _sort_room_cells_by_angle(perimeter_cells, _world_to_grid(room.position))
+	var target_length: int = int(round(float(sorted_perimeter_cells.size()) * clampf(room_perimeter_wall_closedness, 0.0, 1.0)))
+	var max_segment_length: int = maxi(sorted_perimeter_cells.size() - 2, 1)
+	target_length = mini(target_length, max_segment_length)
+	if target_length <= 0:
+		return []
+
+	var room_center_grid: Vector2 = _world_to_grid(room.position)
+	var start_noise: float = _get_internal_wall_direction_noise(room_center_grid + Vector2(29.0, 41.0))
+	var start_index: int = int(floor(start_noise * float(sorted_perimeter_cells.size()))) % sorted_perimeter_cells.size()
+	var perimeter_segment: Array[Cell] = []
+	var added_positions: Dictionary = {}
+	for offset in range(target_length):
+		var candidate_cell: Cell = sorted_perimeter_cells[(start_index + offset) % sorted_perimeter_cells.size()]
+		var candidate_key: Vector2i = _to_grid_lookup_key(candidate_cell.position)
+		if protected_positions.has(candidate_key) or added_positions.has(candidate_key):
+			continue
+
+		perimeter_segment.append(candidate_cell)
+		added_positions[candidate_key] = true
+
+	return perimeter_segment
+
+
+func _get_room_perimeter_floor_cells(room: Room) -> Array[Cell]:
+	var perimeter_cells: Array[Cell] = []
+	var grid_bounds: Rect2i = _get_room_grid_bounds(room)
+	var added_positions: Dictionary = {}
+	for y in range(grid_bounds.position.y, grid_bounds.end.y):
+		for x in range(grid_bounds.position.x, grid_bounds.end.x):
+			var candidate_cell: Cell = _get_cell_at(Vector2(float(x), float(y)))
+			if candidate_cell == null or not candidate_cell.is_floor:
+				continue
+			if not _is_grid_position_inside_room(candidate_cell.position, room):
+				continue
+			if not _is_room_perimeter_floor_cell(candidate_cell.position, room):
+				continue
+
+			var candidate_key: Vector2i = _to_grid_lookup_key(candidate_cell.position)
+			if added_positions.has(candidate_key):
+				continue
+
+			perimeter_cells.append(candidate_cell)
+			added_positions[candidate_key] = true
+
+	return perimeter_cells
+
+
+func _is_room_perimeter_floor_cell(grid_pos: Vector2, room: Room) -> bool:
+	if not _is_grid_position_inside_room(grid_pos, room):
+		return false
+
+	for neighbor_offset: Vector2i in _get_cardinal_grid_neighbor_offsets():
+		var neighbor_grid_pos: Vector2 = grid_pos + Vector2(float(neighbor_offset.x), float(neighbor_offset.y))
+		var neighbor_cell: Cell = _get_cell_at(neighbor_grid_pos)
+		if neighbor_cell == null or not neighbor_cell.is_floor:
+			return true
+		if not _is_grid_position_inside_room(neighbor_cell.position, room):
+			return true
+
+	return false
+
+
+func _is_grid_position_inside_room(grid_pos: Vector2, room: Room) -> bool:
+	var cell_center: Vector3 = _cell_to_world(grid_pos)
+	return _is_world_position_inside_room(Vector2(cell_center.x, cell_center.z), room)
+
+
+func _sort_room_cells_by_angle(cells: Array[Cell], room_center_grid: Vector2) -> Array[Cell]:
+	var sorted_cells: Array[Cell] = []
+	for candidate_cell: Cell in cells:
+		var candidate_angle: float = _get_room_cell_angle(candidate_cell.position, room_center_grid)
+		var inserted: bool = false
+		for insert_index in range(sorted_cells.size()):
+			if candidate_angle < _get_room_cell_angle(sorted_cells[insert_index].position, room_center_grid):
+				sorted_cells.insert(insert_index, candidate_cell)
+				inserted = true
+				break
+		if not inserted:
+			sorted_cells.append(candidate_cell)
+
+	return sorted_cells
+
+
+func _get_room_cell_angle(grid_pos: Vector2, room_center_grid: Vector2) -> float:
+	var offset: Vector2 = grid_pos - room_center_grid
+	return atan2(offset.y, offset.x)
+
+
 ## Identifies the center position of each room
 func _identify_room_centers() -> Array[Vector2]:
 	var room_centers: Array[Vector2] = []
@@ -1259,7 +1691,7 @@ func _select_depth_sources() -> void:
 	
 	# Shuffle room centers for random selection
 	var shuffled_centers: Array[Vector2] = room_centers.duplicate()
-	shuffled_centers.shuffle()
+	_shuffle_vector2_array_with_rng(shuffled_centers)
 	
 	# Select lava sources
 	var lava_count: int = mini(num_lava_sources, shuffled_centers.size())
@@ -1486,10 +1918,39 @@ func _create_and_add_terrain_mesh() -> void:
 		add_child(mesh_instance)
 	mesh_instance.visible = true
 	_end_generation_scope("terrain_mesh.add_nodes")
+	_spawn_terrain_particle_heightfield_collision(mesh_instance, terrain_world_rect)
 
 	print("[Heightmap Terrain] Terrain collision anchored to mesh base Y: ", mesh_instance.position.y)
 	print("[Heightmap Terrain] Terrain mesh with terrain-following collision added to scene")
 	print("[Heightmap Terrain] Created terrain mesh with heightmap texture")
+
+
+func _spawn_terrain_particle_heightfield_collision(mesh_instance: MeshInstance3D, terrain_world_rect: Rect2) -> void:
+	if not terrain_particle_heightfield_collision_enabled:
+		return
+
+	if terrain_world_rect.size.x <= 0.0 or terrain_world_rect.size.y <= 0.0:
+		return
+
+	var max_displacement: float = depth_step_height * 4.0 * heightmap_displacement_amplitude
+	var collision_height: float = max_displacement + wall_heightmap_extra_height + terrain_particle_heightfield_vertical_margin
+	var collision_center: Vector3 = Vector3(
+		terrain_world_rect.position.x + (terrain_world_rect.size.x * 0.5),
+		mesh_instance.position.y + (collision_height * 0.5),
+		terrain_world_rect.position.y + (terrain_world_rect.size.y * 0.5)
+	)
+
+	var particle_collision: GPUParticlesCollisionHeightField3D = GPUParticlesCollisionHeightField3D.new()
+	particle_collision.name = "TerrainParticleHeightFieldCollision"
+	particle_collision.size = Vector3(terrain_world_rect.size.x, collision_height, terrain_world_rect.size.y)
+	particle_collision.resolution = terrain_particle_heightfield_resolution
+	particle_collision.update_mode = GPUParticlesCollisionHeightField3D.UPDATE_MODE_ALWAYS if terrain_particle_heightfield_update_always else GPUParticlesCollisionHeightField3D.UPDATE_MODE_WHEN_MOVED
+	particle_collision.follow_camera_enabled = terrain_particle_heightfield_follow_camera
+	add_child(particle_collision)
+	particle_collision.position = collision_center
+	_spawned_objects.append(particle_collision)
+
+	print("[Heightmap Terrain] Added particle heightfield collision at ", collision_center, " size=", particle_collision.size)
 
 
 func _begin_generation_log(mode: String) -> void:
@@ -1758,7 +2219,7 @@ func _create_outer_terrain_perimeter_cell(grid_pos: Vector2i) -> Cell:
 	perimeter_cell.is_floor = false
 	perimeter_cell.is_wall = false
 	perimeter_cell.noise_value = 0.0
-	perimeter_cell.depth = OUTER_TERRAIN_PERIMETER_DEPTH
+	perimeter_cell.depth = terrain_perimeter_depth_level
 	return perimeter_cell
 
 
@@ -1785,6 +2246,9 @@ func _get_all_grid_neighbor_offsets() -> Array[Vector2i]:
 
 ## Spawns the configured scene at each deepest walkable source cell.
 func _spawn_deepest_point_scenes() -> void:
+	if not spawn_deepest_point_scenes_enabled:
+		return
+
 	if deepest_point_scene == null:
 		return
 
@@ -1839,6 +2303,196 @@ func _spawn_deepest_point_scenes() -> void:
 	print("[Deepest Spawn] Spawned ", _lava_sources.size(), " scene instances")
 
 
+func _spawn_stranded_visitor() -> void:
+	if visitor_scene == null:
+		return
+
+	if _floor_cells.is_empty():
+		return
+
+	var player: Node3D = NodeUtils.find(self, "player", ["../Player"])
+	var reference_position: Vector3 = Vector3.ZERO
+	var exit_room_data: Dictionary = get_exit_room_data()
+	if not exit_room_data.is_empty():
+		reference_position = exit_room_data.get("local_center", Vector3.ZERO)
+	elif player != null:
+		reference_position = player.global_position
+
+	var visitor_spawn_position: Vector3 = _get_stranded_visitor_spawn_position(reference_position)
+	var spawned_node: Node3D = visitor_scene.instantiate() as Node3D
+	if spawned_node == null:
+		push_warning("[Visitor Spawn] Configured visitor scene root must inherit Node3D")
+		return
+
+	add_child(spawned_node)
+	spawned_node.name = "StrandedVisitor"
+	spawned_node.position = visitor_spawn_position + Vector3(0.0, visitor_scene_height_offset, 0.0)
+	spawned_node.add_to_group("stranded_visitor")
+	if spawned_node.has_method("set_spawn_anchor_position"):
+		spawned_node.call("set_spawn_anchor_position", visitor_spawn_position + Vector3(0.0, visitor_scene_height_offset, 0.0))
+	_spawned_objects.append(spawned_node)
+	stranded_visitor_spawned.emit(spawned_node)
+	print("[Visitor Spawn] Added stranded visitor at ", spawned_node.position)
+
+
+func _spawn_exit_point() -> void:
+	if exit_scene == null:
+		return
+
+	var exit_room_data: Dictionary = get_exit_room_data()
+	if exit_room_data.is_empty():
+		return
+
+	var spawned_node: Node3D = exit_scene.instantiate() as Node3D
+	if spawned_node == null:
+		push_warning("[Exit Spawn] Configured exit scene root must inherit Node3D")
+		return
+
+	add_child(spawned_node)
+	spawned_node.name = "ExitPoint"
+	var exit_center: Vector3 = exit_room_data.get("local_center", Vector3.ZERO)
+	spawned_node.position = exit_center + Vector3(0.0, exit_scene_height_offset, 0.0)
+	if spawned_node.has_method("set_procedural_map"):
+		spawned_node.call("set_procedural_map", self)
+	_spawned_objects.append(spawned_node)
+	print("[Exit Spawn] Added exit point at ", spawned_node.position)
+
+
+func _get_stranded_visitor_spawn_position(reference_world_position: Vector3) -> Vector3:
+	var valid_cells: Array[Cell] = []
+	var farthest_distance_squared: float = -1.0
+	var reference_xz: Vector2 = Vector2(reference_world_position.x, reference_world_position.z)
+
+	for cell in _floor_cells:
+		if cell == null:
+			continue
+		if cell.depth > visitor_spawn_max_depth:
+			continue
+
+		var cell_position: Vector3 = _get_cell_surface_position(cell)
+		var cell_distance_squared: float = reference_xz.distance_squared_to(Vector2(cell_position.x, cell_position.z))
+		farthest_distance_squared = maxf(farthest_distance_squared, cell_distance_squared)
+		valid_cells.append(cell)
+
+	if valid_cells.is_empty():
+		var fallback_cell: Cell = _floor_cells[0]
+		return _get_cell_surface_position(fallback_cell)
+
+	var far_candidates: Array[Cell] = []
+	var distance_threshold_squared: float = farthest_distance_squared * 0.55
+	for cell in valid_cells:
+		var candidate_position: Vector3 = _get_cell_surface_position(cell)
+		var candidate_distance_squared: float = reference_xz.distance_squared_to(Vector2(candidate_position.x, candidate_position.z))
+		if candidate_distance_squared >= distance_threshold_squared:
+			far_candidates.append(cell)
+
+	if far_candidates.is_empty():
+		far_candidates = valid_cells
+
+	var selected_index: int = 0
+	if far_candidates.size() > 1:
+		selected_index = _rng.randi_range(0, far_candidates.size() - 1)
+
+	var selected_cell: Cell = far_candidates[selected_index]
+	return _get_cell_surface_position(selected_cell)
+
+
+func get_random_walkable_surface_position_near(origin_world_position: Vector3, min_distance_world: float, max_distance_world: float, max_depth: int = 3) -> Vector3:
+	if _floor_cells.is_empty():
+		return origin_world_position
+
+	var origin_xz: Vector2 = Vector2(origin_world_position.x, origin_world_position.z)
+	var candidate_cells: Array[Cell] = []
+
+	for cell in _floor_cells:
+		if cell == null:
+			continue
+		if cell.depth > max_depth:
+			continue
+
+		var cell_position: Vector3 = _get_cell_surface_position(cell)
+		var distance_to_origin: float = origin_xz.distance_to(Vector2(cell_position.x, cell_position.z))
+		if distance_to_origin < min_distance_world:
+			continue
+		if distance_to_origin > max_distance_world:
+			continue
+		candidate_cells.append(cell)
+
+	if candidate_cells.is_empty():
+		return origin_world_position
+
+	var selected_index: int = 0
+	if candidate_cells.size() > 1:
+		selected_index = _rng.randi_range(0, candidate_cells.size() - 1)
+
+	var selected_cell: Cell = candidate_cells[selected_index]
+	return _get_cell_surface_position(selected_cell)
+
+
+func _spawn_eruptor_scenes() -> void:
+	if eruptor_scene == null:
+		return
+
+	if _lava_sources.is_empty() and not eruptor_scene_spawn_near_player_start:
+		return
+
+	var spawned_eruptor_count: int = 0
+	var player_start_position: Vector3 = Vector3.ZERO
+	var has_player_start_position: bool = false
+	var spawn_parent: Node = _get_eruptor_spawn_parent()
+	if eruptor_scene_spawn_near_player_start:
+		var player: Node3D = NodeUtils.find(self, "player", ["../Player"])
+		if player != null:
+			player_start_position = player.global_position
+			has_player_start_position = true
+
+	if has_player_start_position:
+		var player_eruptor_position: Vector3 = player_start_position + eruptor_scene_player_start_offset + Vector3(0.0, eruptor_scene_height_offset, 0.0)
+		if _spawn_single_eruptor(spawn_parent, "PlayerStartEruptor", player_eruptor_position):
+			spawned_eruptor_count += 1
+
+	var lava_source_index: int = 0
+	for source_grid_pos: Vector2 in _lava_sources:
+		var source_cell: Cell = _get_cell_at(source_grid_pos)
+		if source_cell == null:
+			push_warning("[Eruptor Spawn] Missing cell for source at ", source_grid_pos)
+			continue
+
+		lava_source_index += 1
+		var spawned_node_name: String = "LavaSourceEruptor%d" % lava_source_index
+		if _spawn_single_eruptor(spawn_parent, spawned_node_name, _get_eruptor_spawn_position(source_cell)):
+			spawned_eruptor_count += 1
+
+	print("[Eruptor Spawn] Spawned ", spawned_eruptor_count, " eruptor scene instances")
+
+
+func _get_eruptor_spawn_parent() -> Node:
+	var parent_node: Node = get_parent()
+	if parent_node != null:
+		return parent_node
+
+	return self
+
+
+func _spawn_single_eruptor(parent_node: Node, eruptor_name: String, world_position: Vector3) -> bool:
+	var spawned_node: Node3D = eruptor_scene.instantiate() as Node3D
+	if spawned_node == null:
+		push_warning("[Eruptor Spawn] Configured scene root must inherit Node3D")
+		return false
+
+	parent_node.add_child(spawned_node)
+	spawned_node.name = eruptor_name
+	spawned_node.top_level = true
+	spawned_node.scale = eruptor_scene_scale
+	spawned_node.global_position = world_position
+	if eruptor_scene_random_yaw and _rng != null:
+		spawned_node.rotation.y = _rng.randf_range(0.0, TAU)
+	spawned_node.add_to_group("eruptor_scene")
+	_spawned_objects.append(spawned_node)
+	print("[Eruptor Spawn] Added ", spawned_node.name, " at ", world_position, " under ", parent_node.get_path())
+	return true
+
+
 func _resolve_deepest_point_material_override() -> Material:
 	if deepest_point_match_player_material:
 		var player_node: Node = NodeUtils.find_node(self, "player", ["../Player"], "Player.gd")
@@ -1880,6 +2534,15 @@ func _get_deepest_point_spawn_position(source_cell: Cell, spawned_node: Node3D) 
 		return spawn_position
 
 	spawn_position.y = _get_lava_surface_world_height(_displayed_lava_height_level) + deepest_point_scene_height_offset + deepest_point_lava_float_offset - lowest_local_y
+	return spawn_position
+
+
+func _get_eruptor_spawn_position(source_cell: Cell) -> Vector3:
+	var spawn_position: Vector3 = _get_cell_surface_position(source_cell)
+	if eruptor_scene_align_to_lava_surface and render_lava and use_layered_depth:
+		spawn_position.y = _get_lava_surface_world_height(_displayed_lava_height_level)
+
+	spawn_position.y += eruptor_scene_height_offset
 	return spawn_position
 
 func _disable_collision_for_deepest_point_scene(root_node: Node) -> void:
@@ -2241,22 +2904,37 @@ func _sync_lava_height_state() -> void:
 	lava_height_level = clamped_level
 	_target_lava_height_level = clamped_level
 	_displayed_lava_height_level = clamped_level
+	if clamped_level <= 0.0:
+		_debug_loop_lava_direction = 1.0
+	elif clamped_level >= 4.0:
+		_debug_loop_lava_direction = -1.0
 
 
 ## Gradually raises the lava toward depth 0 and optionally loops back for debugging.
 func _update_rising_lava(delta: float) -> void:
+	if _is_regenerating:
+		return
+
 	if not lava_auto_rise_enabled:
 		return
 
 	if lava_rise_speed_levels_per_second <= 0.0:
 		return
 
+	if debug_loop_rising_lava:
+		var next_debug_target_level: float = _target_lava_height_level + (_debug_loop_lava_direction * lava_rise_speed_levels_per_second * delta)
+		if next_debug_target_level <= 0.0:
+			next_debug_target_level = 0.0
+			_debug_loop_lava_direction = 1.0
+		elif next_debug_target_level >= 4.0:
+			next_debug_target_level = 4.0
+			_debug_loop_lava_direction = -1.0
+
+		lava_height_level = next_debug_target_level
+		_target_lava_height_level = next_debug_target_level
+		return
+
 	if _target_lava_height_level <= 0.0:
-		if debug_loop_rising_lava:
-			lava_height_level = 4.0
-			_target_lava_height_level = 4.0
-			_displayed_lava_height_level = 4.0
-			_refresh_lava_volume()
 		return
 
 	var next_target_level: float = maxf(0.0, _target_lava_height_level - (lava_rise_speed_levels_per_second * delta))
@@ -2269,6 +2947,9 @@ func _update_rising_lava(delta: float) -> void:
 
 ## Animates the visible lava level toward the target and refreshes the lava mesh.
 func _update_lava_height_animation(delta: float) -> void:
+	if _is_regenerating:
+		return
+
 	if _cells.is_empty() or not render_lava or not use_layered_depth:
 		return
 
@@ -2892,7 +3573,7 @@ func _generate_wall_heightmap_texture_async(cells: Array[Cell]) -> ImageTexture:
 
 
 func _enforce_outer_terrain_perimeter_depth(image: Image, cells: Array[Cell], terrain_grid_rect: Rect2i) -> void:
-	var deepest_depth_normalized: float = 1.0 - (float(OUTER_TERRAIN_PERIMETER_DEPTH) / 4.0)
+	var deepest_depth_normalized: float = 1.0 - (float(terrain_perimeter_depth_level) / 4.0)
 	var deepest_color: Color = Color(deepest_depth_normalized, 0.0, 0.0, 1.0)
 
 	for cell in cells:
@@ -4079,6 +4760,20 @@ func _check_floor_world(world_pos: Vector3) -> Dictionary:
 	return {"is_floor": false}
 
 
+func is_world_position_walkable(world_pos: Vector3, max_depth: int = 4) -> bool:
+	var grid_pos: Vector2 = _world_to_grid(Vector2(world_pos.x, world_pos.z))
+	var cell: Cell = _get_cell_at(grid_pos)
+	if cell == null:
+		return false
+	if not cell.is_floor or cell.is_wall:
+		return false
+	if cell.depth > max_depth:
+		return false
+	if float(cell.depth) > _displayed_lava_height_level + 0.001:
+		return false
+	return true
+
+
 func get_camera_lock_room_data() -> Dictionary:
 	if not enable_camera_lock_room:
 		return {}
@@ -4087,20 +4782,73 @@ func get_camera_lock_room_data() -> Dictionary:
 
 	var camera_lock_room: Room = _rooms[_camera_lock_room_index]
 	var defined_room_grid_center: Vector2 = _world_to_grid(camera_lock_room.position)
-	var resolved_room_grid_center: Vector2 = _get_camera_lock_room_resolved_grid_center(camera_lock_room, defined_room_grid_center)
-	var room_center_world_xz: Vector2 = _get_camera_lock_room_center_world_xz(camera_lock_room, resolved_room_grid_center)
+	var resolved_room_grid_center: Vector2 = _get_room_resolved_grid_center(camera_lock_room, defined_room_grid_center)
+	var room_center_world_xz: Vector2 = _get_room_center_world_xz(camera_lock_room, resolved_room_grid_center)
 	var surface_height: float = _get_world_surface_height(room_center_world_xz)
 	var local_center: Vector3 = Vector3(room_center_world_xz.x, surface_height, room_center_world_xz.y)
 	return {
 		"room_index": _camera_lock_room_index,
 		"defined_grid_center": defined_room_grid_center,
 		"resolved_grid_center": resolved_room_grid_center,
+		"local_center": local_center,
 		"center": to_global(local_center),
 		"radius": camera_lock_room.radius
 	}
 
 
-func _get_camera_lock_room_center_world_xz(room: Room, resolved_room_grid_center: Vector2) -> Vector2:
+func get_exit_room_data() -> Dictionary:
+	if _exit_room_index < 0 or _exit_room_index >= _rooms.size():
+		return {}
+
+	var exit_room: Room = _rooms[_exit_room_index]
+	var defined_room_grid_center: Vector2 = _world_to_grid(exit_room.position)
+	var resolved_room_grid_center: Vector2 = _get_room_resolved_grid_center(exit_room, defined_room_grid_center)
+	var room_center_world_xz: Vector2 = _get_room_center_world_xz(exit_room, resolved_room_grid_center)
+	var surface_height: float = _get_world_surface_height(room_center_world_xz)
+	var local_center: Vector3 = Vector3(room_center_world_xz.x, surface_height, room_center_world_xz.y)
+	return {
+		"room_index": _exit_room_index,
+		"defined_grid_center": defined_room_grid_center,
+		"resolved_grid_center": resolved_room_grid_center,
+		"local_center": local_center,
+		"center": to_global(local_center),
+		"radius": exit_room.radius
+	}
+
+
+func has_rescued_visitor() -> bool:
+	var stranded_visitor: Node = get_tree().get_first_node_in_group("stranded_visitor")
+	if stranded_visitor == null:
+		return true
+	if stranded_visitor.has_method("is_rescued"):
+		return bool(stranded_visitor.call("is_rescued"))
+	return false
+
+
+func can_player_extract() -> bool:
+	return has_rescued_visitor() and not _exit_extraction_pending
+
+
+func try_extract_player() -> bool:
+	if not can_player_extract():
+		return false
+	if _exit_extraction_pending:
+		return false
+
+	_exit_extraction_pending = true
+	call_deferred("_complete_player_extraction")
+	return true
+
+
+func _complete_player_extraction() -> void:
+	player_extracted.emit()
+	var reload_error: Error = get_tree().reload_current_scene()
+	if reload_error != OK:
+		_exit_extraction_pending = false
+		push_error("Failed to reload the current scene after extraction.")
+
+
+func _get_room_center_world_xz(room: Room, resolved_room_grid_center: Vector2) -> Vector2:
 	var resolved_cell: Cell = _get_cell_at(resolved_room_grid_center)
 	if resolved_cell != null and resolved_cell.is_floor:
 		var resolved_cell_world: Vector3 = _cell_to_world(resolved_cell.position)
@@ -4109,7 +4857,7 @@ func _get_camera_lock_room_center_world_xz(room: Room, resolved_room_grid_center
 	return room.position
 
 
-func _get_camera_lock_room_resolved_grid_center(room: Room, defined_room_grid_center: Vector2) -> Vector2:
+func _get_room_resolved_grid_center(room: Room, defined_room_grid_center: Vector2) -> Vector2:
 	var center_cell: Cell = _get_cell_at(defined_room_grid_center)
 	if center_cell != null and center_cell.is_floor:
 		return center_cell.position
@@ -4119,6 +4867,36 @@ func _get_camera_lock_room_resolved_grid_center(room: Room, defined_room_grid_ce
 		return nearest_floor_cell.position
 
 	return defined_room_grid_center
+
+
+func _select_exit_room() -> void:
+	_exit_room_index = -1
+	if _rooms.is_empty():
+		return
+
+	for room_variant in _rooms:
+		var room: Room = room_variant
+		room.has_exit = false
+		room.type = "base"
+
+	if _rooms.size() == 1:
+		_exit_room_index = 0
+	else:
+		var anchor_room: Room = _rooms[0]
+		var farthest_distance_squared: float = -1.0
+		for room_index in range(1, _rooms.size()):
+			var candidate_room: Room = _rooms[room_index]
+			var candidate_distance_squared: float = anchor_room.position.distance_squared_to(candidate_room.position)
+			if candidate_distance_squared > farthest_distance_squared:
+				farthest_distance_squared = candidate_distance_squared
+				_exit_room_index = room_index
+
+	if _exit_room_index < 0:
+		_exit_room_index = 0
+
+	var exit_room: Room = _rooms[_exit_room_index]
+	exit_room.has_exit = true
+	exit_room.type = "exit"
 
 
 func _find_nearest_floor_cell_for_room(room: Room, room_center_grid: Vector2) -> Cell:
@@ -4144,11 +4922,32 @@ func _select_camera_lock_room() -> void:
 	if not enable_camera_lock_room or _rooms.is_empty():
 		return
 
-	if _rooms.size() > 1:
-		_camera_lock_room_index = 1
+	var candidate_room_indices: Array[int] = []
+	for room_index in range(_rooms.size()):
+		if _rooms.size() > 1 and room_index == _exit_room_index:
+			continue
+		candidate_room_indices.append(room_index)
+
+	if candidate_room_indices.is_empty():
+		candidate_room_indices.append(0)
+
+	if _rng == null:
+		_camera_lock_room_index = candidate_room_indices[0]
 		return
 
-	_camera_lock_room_index = 0
+	var selected_index: int = _rng.randi_range(0, candidate_room_indices.size() - 1)
+	_camera_lock_room_index = candidate_room_indices[selected_index]
+
+
+func _shuffle_vector2_array_with_rng(values: Array[Vector2]) -> void:
+	if _rng == null or values.size() <= 1:
+		return
+
+	for index in range(values.size() - 1, 0, -1):
+		var swap_index: int = _rng.randi_range(0, index)
+		var swap_value: Vector2 = values[index]
+		values[index] = values[swap_index]
+		values[swap_index] = swap_value
 
 
 func _spawn_camera_lock_debug_marker() -> void:
@@ -4184,8 +4983,8 @@ func _spawn_camera_lock_debug_marker() -> void:
 	debug_marker.mesh = ring_mesh
 	debug_marker.material_override = debug_material
 	debug_marker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	debug_marker.global_position = debug_center + Vector3.UP * camera_lock_room_debug_height_offset
 	add_child(debug_marker)
+	debug_marker.global_position = debug_center + Vector3.UP * camera_lock_room_debug_height_offset
 	_spawned_objects.append(debug_marker)
 
 
@@ -4684,4 +5483,106 @@ func get_lava_sources() -> Array[Vector2]:
 ## Public getter for highground positions (used by minimap).
 func get_highground_positions() -> Array[Vector2]:
 	return _highground_positions
+
+
+## Returns the generated terrain and lava data needed by the viewport minimap renderer.
+func get_minimap_render_data() -> Dictionary:
+	if _cells.is_empty() or _heightmap_texture == null:
+		return {}
+
+	var terrain_world_rect: Rect2 = _get_terrain_world_rect()
+	var terrain_grid_rect: Rect2i = _get_terrain_grid_rect()
+	var lava_surface_bounds: Dictionary = _get_lava_surface_bounds()
+	var terrain_amplitude: float = _get_max_terrain_displacement()
+	var terrain_base_y: float = floor_height - terrain_amplitude
+	var terrain_albedo_color: Color = Color(0.09498306, 0.1253263, 0.18882218, 1.0)
+	var terrain_emission_color: Color = Color(0.46193212, 0.119613476, 0.102107845, 1.0)
+	if _base_material != null:
+		terrain_albedo_color = _base_material.albedo_color
+		if _base_material.emission_enabled:
+			terrain_emission_color = _base_material.emission
+
+	var minimap_lava_color: Color = Color(0.0, 0.0, 0.0, 0.6509804)
+	var minimap_lava_deep_color: Color = Color(1.8247963, 0.69283086, 0.0, 1.0)
+	var minimap_lava_caustic_color: Color = Color(0.4397409, 0.10399803, 0.0, 1.0)
+	var resolved_lava_material: Material = _create_lava_material()
+	if resolved_lava_material is ShaderMaterial:
+		var shader_lava_material: ShaderMaterial = resolved_lava_material
+		var lava_color_variant: Variant = shader_lava_material.get_shader_parameter("lava_color")
+		if lava_color_variant is Color:
+			minimap_lava_color = lava_color_variant
+		var deep_lava_color_variant: Variant = shader_lava_material.get_shader_parameter("deep_lava_color")
+		if deep_lava_color_variant is Color:
+			minimap_lava_deep_color = deep_lava_color_variant
+		var caustic_color_variant: Variant = shader_lava_material.get_shader_parameter("caustic_color")
+		if caustic_color_variant is Color:
+			minimap_lava_caustic_color = caustic_color_variant
+
+	return {
+		"terrain_world_rect": terrain_world_rect,
+		"terrain_grid_rect": terrain_grid_rect,
+		"heightmap_texture": _heightmap_texture,
+		"wall_heightmap_texture": _wall_heightmap_texture,
+		"terrain_albedo_color": terrain_albedo_color,
+		"terrain_emission_color": terrain_emission_color,
+		"terrain_amplitude": terrain_amplitude,
+		"terrain_base_y": terrain_base_y,
+		"wall_amplitude": wall_heightmap_extra_height,
+		"floor_height": floor_height,
+		"cell_size": cell_size,
+		"mesh_subdivisions": mesh_subdivisions,
+		"max_mesh_subdivisions_per_axis": max_terrain_mesh_subdivisions_per_axis,
+		"lava_surface_bounds": lava_surface_bounds,
+		"lava_height_level": _displayed_lava_height_level,
+		"lava_surface_y": _get_lava_surface_world_height(_displayed_lava_height_level),
+		"render_lava": render_lava and use_layered_depth,
+		"lava_color": minimap_lava_color,
+		"lava_deep_color": minimap_lava_deep_color,
+		"lava_caustic_color": minimap_lava_caustic_color,
+		"exploration_reveal_radius_cells": exploration_reveal_radius_cells
+	}
+
+
+## Returns the current world-space height of the visible lava surface.
+func get_current_lava_surface_world_height() -> float:
+	return _get_lava_surface_world_height(_displayed_lava_height_level)
+
+
+## Returns the sampled terrain surface height for minimap geometry baking.
+func get_surface_height_at_world_xz(world_xz: Vector2) -> float:
+	return _get_world_surface_height(world_xz)
+
+
+## Returns the generated terrain mesh instance for the viewport minimap.
+func get_minimap_terrain_mesh_instance() -> MeshInstance3D:
+	if _terrain_mesh_instance != null and is_instance_valid(_terrain_mesh_instance):
+		return _terrain_mesh_instance
+	return null
+
+
+## Returns the generated lava surface mesh instance for the viewport minimap.
+func get_minimap_lava_mesh_instance() -> MeshInstance3D:
+	if _lava_volume != null and is_instance_valid(_lava_volume):
+		return _lava_volume
+	return null
+
+
+## Returns the player tracked by the exploration system.
+func get_exploration_player() -> Node3D:
+	if _exploration_player != null and is_instance_valid(_exploration_player):
+		return _exploration_player
+	return null
+
+
+## Sets the player-driven exploration reveal radius in grid cells.
+func set_exploration_reveal_radius_cells(new_radius: int) -> void:
+	exploration_reveal_radius_cells = maxi(new_radius, 0)
+	if _cells.is_empty():
+		return
+	_update_exploration_tracking(true)
+
+
+## Returns the current player-driven exploration reveal radius in grid cells.
+func get_exploration_reveal_radius_cells() -> int:
+	return exploration_reveal_radius_cells
 

@@ -1,6 +1,6 @@
 [gd_resource type="ShaderMaterial" format=3 uid="uid://c8rtojfkrflo2"]
 
-[ext_resource type="Shader" uid="uid://cb18qe65k67lc" path="res://shaders/psOneLavaOrb.gdshader" id="1_lava_orb_shader"]
+[ext_resource type="Shader" uid="uid://cy7je2p7dnvdu" path="res://ps1_ocean.gdshader" id="1_3qsxi"]
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_lava_orb"]
 frequency = 0.025
@@ -11,13 +11,10 @@ seamless = true
 
 [resource]
 render_priority = 1
-shader = ExtResource("1_lava_orb_shader")
+shader = ExtResource("1_3qsxi")
 shader_parameter/wave_frequency = 7.4
 shader_parameter/wave_amplitude = 0.1
 shader_parameter/wave_speed = 0.4
-shader_parameter/droop_amount = 0.52999998815344
-shader_parameter/droop_bulge = 0.77999998256544
-shader_parameter/droop_curve = 2.20000002533204
 shader_parameter/noise_texture = SubResource("NoiseTexture3D_lava_orb")
 shader_parameter/caustic_color = Color(0, 0, 0, 1)
 shader_parameter/caustic_scale = 0.1
@@ -28,13 +25,10 @@ shader_parameter/caustic_falloff = 0.0970000046075
 shader_parameter/lava_color = Color(0, 0, 0, 1)
 shader_parameter/deep_lava_color = Color(1.8247963, 0.69283086, 0, 1)
 shader_parameter/pixelization_amount = 0.0
+shader_parameter/color_deep_fade_distance = 3.0
+shader_parameter/far_clip_depth_threshold = 0.9995
 shader_parameter/foam_color = Color(1.8247963, 0.59500664, 0.2246723, 1)
 shader_parameter/foam_scale = 2.0
 shader_parameter/foam_speed = 0.04
-shader_parameter/edge_foam_amount = 0.45
-shader_parameter/edge_foam_fresnel_power = 2.5
+shader_parameter/foam_distance = 0.4
 shader_parameter/foam_noise_influence = 0.0499999988824
-shader_parameter/emission_strength = 1.35
-shader_parameter/roughness_value = 0.0
-shader_parameter/metallic_value = 0.0
-shader_parameter/specular_value = 0.0

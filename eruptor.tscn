@@ -1,0 +1,38 @@
+[gd_scene format=3 uid="uid://ctxrcf4c6x3i6"]
+
+[sub_resource type="Curve" id="Curve_c5ler"]
+_data = [Vector2(0, 0.48037803), 0.0, 0.0, 0, 0, Vector2(0.20141342, 0.6787792), 3.2678459, 3.2678459, 0, 0, Vector2(1, 0.57485473), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_eyt04"]
+curve = SubResource("Curve_c5ler")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_1p3rl"]
+lifetime_randomness = 0.2
+gravity = Vector3(0, -0.3, 0)
+scale_curve = SubResource("CurveTexture_eyt04")
+collision_mode = 1
+collision_friction = 1.0
+collision_bounce = 0.0
+collision_use_scale = true
+
+[sub_resource type="SphereMesh" id="SphereMesh_8h68d"]
+radius = 1.5
+height = 3.0
+
+[node name="Eruptor" type="Node3D" unique_id=1928214964]
+
+[node name="Lava Emitter" type="GPUParticles3D" parent="." unique_id=546138868]
+layers = 2
+amount = 30
+lifetime = 20.0
+preprocess = 20.0
+speed_scale = 0.2
+explosiveness = 0.02
+randomness = 0.1
+fixed_fps = 60
+collision_base_size = 0.1
+visibility_aabb = AABB(-12, -4, -12, 24, 8, 24)
+trail_lifetime = 3.0
+process_material = SubResource("ParticleProcessMaterial_1p3rl")
+draw_pass_1 = SubResource("SphereMesh_8h68d")
