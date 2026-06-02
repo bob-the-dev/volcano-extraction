@@ -1,22 +1,21 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://ybqx4gu6y4b8"]
 
-[ext_resource type="Script" path="res://scripts/exit_point.gd" id="1_exit_script"]
-[ext_resource type="PackedScene" path="res://models/GLTF/Exit.gltf" id="2_exit_model"]
+[ext_resource type="Script" uid="uid://bf7r6alji1os1" path="res://scripts/exit_point.gd" id="1_exit_script"]
+[ext_resource type="PackedScene" uid="uid://dlt5ofbi01wix" path="res://models/GLTF/Exit.gltf" id="2_exit_model"]
 
-[node name="ExitPoint" type="Node3D"]
+[node name="ExitPoint" type="Node3D" unique_id=246110604]
 script = ExtResource("1_exit_script")
 
-[node name="VisualRoot" type="Node3D" parent="."]
+[node name="VisualRoot" type="Node3D" parent="." unique_id=7054500]
 
-[node name="ExitModel" parent="VisualRoot" instance=ExtResource("2_exit_model")]
-transform = Transform3D(2.5, 0, 0, 0, 2.5, 0, 0, 0, 2.5, 0, 0, 0)
+[node name="ExitModel" parent="VisualRoot" unique_id=2008727599 instance=ExtResource("2_exit_model")]
+transform = Transform3D(10, 0, 0, 0, -4.371139e-07, 10, 0, -10, -4.371139e-07, 0, 0, 0)
 
-[node name="PromptLabel" type="Label3D" parent="."]
+[node name="PromptLabel" type="Label3D" parent="." unique_id=1005469934]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.2, 0)
-billboard = 1
-font_size = 64
-modulate = Color(1, 0.947, 0.72, 1)
-outline_modulate = Color(0, 0, 0, 1)
-outline_size = 8
-text = "Press Space to leave safely"
 visible = false
+billboard = 1
+modulate = Color(1, 0.947, 0.72, 1)
+text = "Press Space to leave safely"
+font_size = 64
+outline_size = 8

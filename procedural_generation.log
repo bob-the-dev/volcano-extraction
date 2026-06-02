@@ -1,99 +1,58 @@
-2026-06-02 11:14:33 | +0.006 ms | START | Generation started via generate_map_with_loading
-2026-06-02 11:14:33 | +0.332 ms | PATH | C:/Users/Gebruiker/Documents/volcano-extraction/procedural_generation.log
-2026-06-02 11:14:33 | +0.536 ms | CONFIG | loading_visualization=false
-2026-06-02 11:14:33 | +0.751 ms | STAGE | 1/10 Evicting Yesterday | Sweeping out the last expedition before anyone trips over it.
-2026-06-02 11:14:33 | +483.216 ms | BEGIN | clear_map
-2026-06-02 11:14:33 | +483.702 ms | END | clear_map completed in 0.482 ms | spawned_objects=0
-2026-06-02 11:14:33 | +483.913 ms | STAGE | 2/10 Consulting The Volcano | Reading tremors, static, and several deeply suspicious omens.
-2026-06-02 11:14:33 | +487.712 ms | BEGIN | initialize_generation_state
-2026-06-02 11:14:33 | +488.139 ms | STATE | seed=8151085410398967315 map=174x189 area=32886 target_rooms=79
-2026-06-02 11:14:33 | +488.416 ms | END | initialize_generation_state completed in 0.702 ms | seed=8151085410398967315 map=174x189 target_rooms=79
-2026-06-02 11:14:33 | +488.660 ms | STAGE | 3/10 Sketching Escape Routes | Dropping rooms where future panic will feel most cinematic.
-2026-06-02 11:14:33 | +489.985 ms | BEGIN | generate_rooms
-2026-06-02 11:14:33 | +491.398 ms | END | generate_rooms completed in 1.408 ms | rooms=6
-2026-06-02 11:14:33 | +491.625 ms | STAGE | 4/10 Stamping The Grid | Turning wild crater dreams into tiles the boots can understand.
-2026-06-02 11:14:33 | +505.674 ms | BEGIN | generate_cells
-2026-06-02 11:14:33 | +532.922 ms | END | generate_cells completed in 27.239 ms | cells=5538
-2026-06-02 11:14:33 | +533.322 ms | STAGE | 5/10 Teaching Rocks To Be Rude | Marking walls in all the places your ankles would least appreciate.
-2026-06-02 11:14:33 | +538.160 ms | BEGIN | mark_walls
-2026-06-02 11:14:34 | +676.553 ms | END | mark_walls completed in 138.382 ms | walls=652 floors=1329
-2026-06-02 11:14:34 | +676.959 ms | BEGIN | wall_fill_visualization
-2026-06-02 11:14:34 | +677.213 ms | END | wall_fill_visualization completed in 0.250 ms
-2026-06-02 11:14:34 | +677.414 ms | STAGE | 6/10 Pouring In The Regret | Letting lava settle into every low spot that looked remotely comfortable.
-2026-06-02 11:14:34 | +678.709 ms | BEGIN | mark_lava
-2026-06-02 11:14:34 | +681.499 ms | END | mark_lava completed in 2.786 ms
-2026-06-02 11:14:34 | +681.759 ms | STAGE | 7/10 Extruding The Disaster | Pulling cliffs, floors, and molten nonsense out of the ground.
-2026-06-02 11:14:34 | +687.701 ms | BEGIN | spawn_geometry
-2026-06-02 11:14:34 | +688.040 ms | BEGIN | geometry.select_depth_sources
-2026-06-02 11:14:34 | +688.406 ms | END | geometry.select_depth_sources completed in 0.363 ms | lava_sources=2 highground=4
-2026-06-02 11:14:34 | +688.656 ms | BEGIN | geometry.calculate_depths
-2026-06-02 11:14:34 | +1181.177 ms | END | geometry.calculate_depths completed in 492.507 ms | cells=5538
-2026-06-02 11:14:34 | +1181.592 ms | BEGIN | geometry.apply_source_overrides
-2026-06-02 11:14:34 | +1181.877 ms | END | geometry.apply_source_overrides completed in 0.282 ms
-2026-06-02 11:14:34 | +1182.083 ms | BEGIN | geometry.spawn_base_mesh
-2026-06-02 11:14:34 | +1182.278 ms | BEGIN | base_mesh.build_base_cells
-2026-06-02 11:14:34 | +1211.708 ms | END | base_mesh.build_base_cells completed in 29.418 ms | base_cells=2956
-2026-06-02 11:14:34 | +1212.136 ms | BEGIN | base_mesh.generate_heightmap_texture
-2026-06-02 11:14:34 | +1212.846 ms | BEGIN | heightmap.rasterize_cells
-2026-06-02 11:14:34 | +1281.679 ms | END | heightmap.rasterize_cells completed in 68.819 ms | cells=2956 tex=848x1040
-2026-06-02 11:14:34 | +1282.095 ms | BEGIN | heightmap.detail_noise
-2026-06-02 11:14:34 | +1439.491 ms | INFO | heightmap.detail_noise_backend=csharp
-2026-06-02 11:14:34 | +1439.948 ms | END | heightmap.detail_noise completed in 157.848 ms
-2026-06-02 11:14:34 | +1440.188 ms | BEGIN | heightmap.gaussian_blur
-2026-06-02 11:14:34 | +1580.964 ms | INFO | heightmap.blur_backend=csharp
-2026-06-02 11:14:34 | +1581.436 ms | END | heightmap.gaussian_blur completed in 141.243 ms | radius=20 bounds=720x912
-2026-06-02 11:14:34 | +1581.652 ms | BEGIN | heightmap.enforce_outer_perimeter
-2026-06-02 11:14:34 | +1609.254 ms | END | heightmap.enforce_outer_perimeter completed in 27.588 ms
-2026-06-02 11:14:34 | +1609.696 ms | BEGIN | heightmap.depth_distribution
-2026-06-02 11:14:34 | +1611.020 ms | END | heightmap.depth_distribution completed in 1.321 ms
-2026-06-02 11:14:34 | +1611.248 ms | BEGIN | heightmap.create_texture
-2026-06-02 11:14:34 | +1612.961 ms | END | heightmap.create_texture completed in 1.705 ms
-2026-06-02 11:14:34 | +1613.253 ms | END | base_mesh.generate_heightmap_texture completed in 401.112 ms
-2026-06-02 11:14:34 | +1613.470 ms | BEGIN | base_mesh.generate_wall_heightmap_texture
-2026-06-02 11:14:34 | +1614.194 ms | BEGIN | wall_heightmap.apply_blend
-2026-06-02 11:14:34 | +1614.431 ms | BEGIN | wall_heightmap.stamp_clusters
-2026-06-02 11:14:35 | +1656.243 ms | INFO | wall_heightmap.blend_backend=csharp
-2026-06-02 11:14:35 | +1656.715 ms | END | wall_heightmap.stamp_clusters completed in 42.278 ms | processed_walls=652
-2026-06-02 11:14:35 | +1656.955 ms | END | wall_heightmap.apply_blend completed in 42.757 ms | cells=2956 tex=848x1040
-2026-06-02 11:14:35 | +1657.172 ms | BEGIN | wall_heightmap.post_blur
-2026-06-02 11:14:35 | +1706.500 ms | END | wall_heightmap.post_blur completed in 49.312 ms
-2026-06-02 11:14:35 | +1706.942 ms | BEGIN | wall_heightmap.create_texture
-2026-06-02 11:14:35 | +1707.839 ms | END | wall_heightmap.create_texture completed in 0.892 ms
-2026-06-02 11:14:35 | +1708.114 ms | END | base_mesh.generate_wall_heightmap_texture completed in 94.640 ms
-2026-06-02 11:14:35 | +1708.352 ms | BEGIN | base_mesh.create_and_add_terrain_mesh
-2026-06-02 11:14:35 | +1708.572 ms | BEGIN | terrain_mesh.create_mesh_instance
-2026-06-02 11:14:35 | +1724.175 ms | END | terrain_mesh.create_mesh_instance completed in 15.597 ms
-2026-06-02 11:14:35 | +1724.586 ms | BEGIN | terrain_mesh.create_shader_material
-2026-06-02 11:14:35 | +1820.540 ms | END | terrain_mesh.create_shader_material completed in 95.947 ms
-2026-06-02 11:14:35 | +1821.196 ms | BEGIN | terrain_mesh.create_collision_shape
-2026-06-02 11:14:35 | +1821.476 ms | BEGIN | terrain_mesh.build_collision_heightmap_image
-2026-06-02 11:14:35 | +1882.372 ms | INFO | terrain.collision_heightmap_backend=csharp
-2026-06-02 11:14:35 | +1882.888 ms | END | terrain_mesh.build_collision_heightmap_image completed in 61.406 ms | samples=637x781
-2026-06-02 11:14:35 | +1883.173 ms | BEGIN | terrain_mesh.update_collision_map_data
-2026-06-02 11:14:35 | +1885.922 ms | END | terrain_mesh.update_collision_map_data completed in 2.744 ms | samples=637x781
-2026-06-02 11:14:35 | +1886.204 ms | END | terrain_mesh.create_collision_shape completed in 65.005 ms
-2026-06-02 11:14:35 | +1888.567 ms | BEGIN | terrain_mesh.add_nodes
-2026-06-02 11:14:35 | +2466.628 ms | END | terrain_mesh.add_nodes completed in 578.042 ms
-2026-06-02 11:14:35 | +2467.242 ms | END | base_mesh.create_and_add_terrain_mesh completed in 758.888 ms
-2026-06-02 11:14:35 | +2468.306 ms | END | geometry.spawn_base_mesh completed in 1286.218 ms
-2026-06-02 11:14:35 | +2468.533 ms | BEGIN | geometry.spawn_lava_volume
-2026-06-02 11:14:35 | +2471.308 ms | END | geometry.spawn_lava_volume completed in 2.773 ms
-2026-06-02 11:14:35 | +2471.559 ms | BEGIN | geometry.spawn_lava_orbs
-2026-06-02 11:14:35 | +2474.825 ms | END | geometry.spawn_lava_orbs completed in 3.260 ms
-2026-06-02 11:14:36 | +3110.957 ms | BEGIN | geometry.collect_floor_cells
-2026-06-02 11:14:36 | +3124.174 ms | END | geometry.collect_floor_cells completed in 13.209 ms | floors=1329
-2026-06-02 11:14:36 | +3124.617 ms | END | spawn_geometry completed in 2436.913 ms | floors=1329 lava_sources=2 highground=4
-2026-06-02 11:14:36 | +3124.880 ms | STAGE | 8/10 Marking The Exit | Choosing the one doorway the volcano will still count as a legal departure.
-2026-06-02 11:14:36 | +3140.914 ms | BEGIN | spawn_exit_point
-2026-06-02 11:14:36 | +3141.609 ms | END | spawn_exit_point completed in 0.694 ms
-2026-06-02 11:14:36 | +3141.893 ms | STAGE | 9/10 Dropping You Somewhere Legal | Finding a tile that counts as safe enough for paperwork.
-2026-06-02 11:14:36 | +3183.826 ms | BEGIN | place_player_on_floor
-2026-06-02 11:14:36 | +3184.934 ms | END | place_player_on_floor completed in 1.106 ms
-2026-06-02 11:14:36 | +3185.175 ms | BEGIN | spawn_stranded_visitor
-2026-06-02 11:14:36 | +3258.173 ms | END | spawn_stranded_visitor completed in 72.990 ms
-2026-06-02 11:14:36 | +3258.576 ms | BEGIN | spawn_eruptor_scenes
-2026-06-02 11:14:36 | +3263.796 ms | END | spawn_eruptor_scenes completed in 5.213 ms | spawned=2
-2026-06-02 11:14:36 | +3264.168 ms | STAGE | 10/10 Teaching The Map To Gossip | Preparing exploration tracking for every questionable decision ahead.
-2026-06-02 11:14:36 | +3300.509 ms | BEGIN | setup_exploration_tracking
-2026-06-02 11:14:36 | +3301.472 ms | END | setup_exploration_tracking completed in 0.960 ms | explored_cells=221
-2026-06-02 11:14:36 | +3331.758 ms | DONE | Generation finished in 3331.742 ms | rooms=6 cells=5538 floors=1329
+2026-06-02 11:49:56 | +0.005 ms | START | Generation started via regenerate_map
+2026-06-02 11:49:56 | +0.488 ms | PATH | C:/Users/Gebruiker/Documents/volcano-extraction/procedural_generation.log
+2026-06-02 11:49:56 | +1.115 ms | BEGIN | clear_map
+2026-06-02 11:49:56 | +1.971 ms | END | clear_map completed in 0.852 ms | spawned_objects=0
+2026-06-02 11:49:56 | +2.339 ms | BEGIN | generate_map
+2026-06-02 11:49:56 | +2.668 ms | STATE | seed=-6513989931674444077 map=191x182 area=34762 target_rooms=83
+2026-06-02 11:49:56 | +189.544 ms | END | generate_map completed in 187.192 ms | rooms=7 cells=5925
+2026-06-02 11:49:56 | +190.239 ms | BEGIN | spawn_geometry
+2026-06-02 11:49:56 | +190.562 ms | BEGIN | geometry.select_depth_sources
+2026-06-02 11:49:56 | +191.112 ms | END | geometry.select_depth_sources completed in 0.547 ms | lava_sources=2 highground=5
+2026-06-02 11:49:56 | +191.379 ms | BEGIN | geometry.calculate_depths
+2026-06-02 11:49:56 | +695.342 ms | END | geometry.calculate_depths completed in 503.948 ms | cells=5925
+2026-06-02 11:49:56 | +695.819 ms | BEGIN | geometry.apply_source_overrides
+2026-06-02 11:49:56 | +696.582 ms | END | geometry.apply_source_overrides completed in 0.757 ms
+2026-06-02 11:49:56 | +697.055 ms | BEGIN | geometry.spawn_base_mesh
+2026-06-02 11:49:56 | +697.386 ms | BEGIN | base_mesh.build_base_cells
+2026-06-02 11:49:56 | +732.156 ms | END | base_mesh.build_base_cells completed in 34.755 ms | base_cells=3312
+2026-06-02 11:49:56 | +733.026 ms | BEGIN | base_mesh.generate_heightmap_texture
+2026-06-02 11:49:57 | +939.411 ms | INFO | heightmap.detail_noise_backend=csharp
+2026-06-02 11:49:57 | +1159.309 ms | INFO | heightmap.blur_backend=csharp
+2026-06-02 11:49:57 | +1162.964 ms | END | base_mesh.generate_heightmap_texture completed in 429.933 ms
+2026-06-02 11:49:57 | +1163.391 ms | BEGIN | base_mesh.generate_wall_heightmap_texture
+2026-06-02 11:49:57 | +1203.502 ms | INFO | wall_heightmap.blend_backend=csharp
+2026-06-02 11:49:57 | +1259.759 ms | END | base_mesh.generate_wall_heightmap_texture completed in 96.349 ms
+2026-06-02 11:49:57 | +1260.506 ms | BEGIN | base_mesh.create_and_add_terrain_mesh
+2026-06-02 11:49:57 | +1260.947 ms | BEGIN | terrain_mesh.create_mesh_instance
+2026-06-02 11:49:57 | +1277.190 ms | END | terrain_mesh.create_mesh_instance completed in 16.236 ms
+2026-06-02 11:49:57 | +1277.712 ms | BEGIN | terrain_mesh.create_shader_material
+2026-06-02 11:49:57 | +1375.835 ms | END | terrain_mesh.create_shader_material completed in 98.118 ms
+2026-06-02 11:49:57 | +1376.658 ms | BEGIN | terrain_mesh.create_collision_shape
+2026-06-02 11:49:57 | +1377.129 ms | BEGIN | terrain_mesh.build_collision_heightmap_image
+2026-06-02 11:49:57 | +1437.760 ms | INFO | terrain.collision_heightmap_backend=csharp
+2026-06-02 11:49:57 | +1438.417 ms | END | terrain_mesh.build_collision_heightmap_image completed in 61.277 ms | samples=817x709
+2026-06-02 11:49:57 | +1438.763 ms | BEGIN | terrain_mesh.update_collision_map_data
+2026-06-02 11:49:57 | +1442.036 ms | END | terrain_mesh.update_collision_map_data completed in 3.268 ms | samples=817x709
+2026-06-02 11:49:57 | +1442.429 ms | END | terrain_mesh.create_collision_shape completed in 65.761 ms
+2026-06-02 11:49:57 | +1446.093 ms | BEGIN | terrain_mesh.add_nodes
+2026-06-02 11:49:58 | +2168.388 ms | END | terrain_mesh.add_nodes completed in 722.281 ms
+2026-06-02 11:49:58 | +2169.299 ms | END | base_mesh.create_and_add_terrain_mesh completed in 908.790 ms
+2026-06-02 11:49:58 | +2170.678 ms | END | geometry.spawn_base_mesh completed in 1473.617 ms
+2026-06-02 11:49:58 | +2170.986 ms | BEGIN | geometry.spawn_lava_volume
+2026-06-02 11:49:58 | +2174.037 ms | END | geometry.spawn_lava_volume completed in 3.049 ms
+2026-06-02 11:49:58 | +2174.359 ms | BEGIN | geometry.spawn_lava_orbs
+2026-06-02 11:49:58 | +2178.337 ms | END | geometry.spawn_lava_orbs completed in 3.975 ms
+2026-06-02 11:49:58 | +2178.673 ms | BEGIN | geometry.collect_floor_cells
+2026-06-02 11:49:58 | +2180.789 ms | END | geometry.collect_floor_cells completed in 2.111 ms | floors=1596
+2026-06-02 11:49:58 | +2181.211 ms | END | spawn_geometry completed in 1990.966 ms | floors=1596 lava_sources=2 highground=5
+2026-06-02 11:49:58 | +2181.746 ms | BEGIN | place_player_on_floor
+2026-06-02 11:49:58 | +2183.038 ms | END | place_player_on_floor completed in 1.289 ms
+2026-06-02 11:49:58 | +2183.554 ms | BEGIN | spawn_exit_point
+2026-06-02 11:49:58 | +2184.100 ms | END | spawn_exit_point completed in 0.544 ms
+2026-06-02 11:49:58 | +2184.449 ms | BEGIN | spawn_stranded_visitor
+2026-06-02 11:49:58 | +2260.891 ms | END | spawn_stranded_visitor completed in 76.434 ms
+2026-06-02 11:49:58 | +2261.404 ms | BEGIN | spawn_eruptor_scenes
+2026-06-02 11:49:58 | +2262.670 ms | END | spawn_eruptor_scenes completed in 1.263 ms | spawned=2
+2026-06-02 11:49:58 | +2263.281 ms | BEGIN | setup_exploration_tracking
+2026-06-02 11:49:58 | +2263.839 ms | END | setup_exploration_tracking completed in 0.554 ms | explored_cells=61
+2026-06-02 11:49:58 | +2293.714 ms | DONE | Generation finished in 2293.696 ms | rooms=7 cells=5925 floors=1596

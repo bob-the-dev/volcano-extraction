@@ -30,9 +30,14 @@ const WALL_PILLAR_JITTER_RATIO: float = 0.08
 const WALL_COLLISION_SIZE_RATIO: float = 0.84
 const WALL_PILLAR_EMBED_DEPTH_RATIO: float = 0.14
 const WALL_PILLAR_CENTER_LEAN_MAX_DEGREES: float = 15.0
+const DEFAULT_TERRAIN_PERIMETER_INNER_DEPTH: float = 0.5
 const WALL_HEIGHTMAP_PEAK_RADIUS_RATIO: float = 0.42
 const WALL_HEIGHTMAP_PEAK_STRENGTH_RATIO: float = 0.82
 const WALL_HEIGHTMAP_BASE_STRENGTH_RATIO: float = 0.58
+const MIN_WALL_HEIGHTMAP_PEAK_COUNT: int = 1
+const MAX_WALL_HEIGHTMAP_PEAK_COUNT: int = 6
+const WALL_HEIGHTMAP_PHASE_BUCKET_COUNT: int = 1024
+const WALL_HEIGHTMAP_PEAK_COUNT_WEIGHTS: Array[int] = [1, 3, 6, 9, 6, 2]
 const GENERATION_LOG_PATH: String = "res://procedural_generation.log"
 const HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH: String = "res://scripts/utils/HeightmapBlurHelper.cs"
 const ERUPTOR_BLOB_COMPOSITE_SCRIPT_PATH: String = "res://scripts/eruptor_blob_composite.gd"
@@ -50,7 +55,7 @@ class Cell:
 	var is_floor: bool
 	var is_wall: bool
 	var noise_value: float
-	var depth: int = 0  # Depth level from 0 (walls/shallow) to 4 (deep)
+	var depth: float = 0.0  # Depth level from 0 (walls/shallow) to 4 (deep)
 
 
 class TerrainFootprint:
@@ -142,6 +147,12 @@ class TerrainFootprint:
 @export_range(0, 4, 1) var terrain_perimeter_depth_level: int = OUTER_TERRAIN_PERIMETER_DEPTH:
 	set(value):
 		terrain_perimeter_depth_level = value
+		if not Engine.is_editor_hint() and is_inside_tree() and not _is_regenerating:
+			call_deferred("_regenerate_map")
+## Depth assigned to the innermost synthetic perimeter layer before it falls off toward the outer collar depth.
+@export_range(0.0, 4.0, 0.1) var terrain_perimeter_inner_depth_level: float = DEFAULT_TERRAIN_PERIMETER_INNER_DEPTH:
+	set(value):
+		terrain_perimeter_inner_depth_level = value
 		if not Engine.is_editor_hint() and is_inside_tree() and not _is_regenerating:
 			call_deferred("_regenerate_map")
 
@@ -2068,8 +2079,8 @@ func _build_terrain_base_cells() -> Array[Cell]:
 
 	var perimeter_positions: Dictionary = _build_terrain_perimeter_positions(occupied_positions)
 	for perimeter_key in perimeter_positions.keys():
-		var perimeter_grid_pos: Vector2i = perimeter_positions[perimeter_key]
-		base_cells.append(_create_outer_terrain_perimeter_cell(perimeter_grid_pos))
+		var perimeter_grid_data: Vector3i = perimeter_positions[perimeter_key]
+		base_cells.append(_create_outer_terrain_perimeter_cell(perimeter_grid_data, maxi(terrain_perimeter_cells, 0)))
 
 	_update_terrain_bounds_from_cells(base_cells)
 	return base_cells
@@ -2097,11 +2108,12 @@ func _build_terrain_perimeter_positions(occupied_positions: Dictionary) -> Dicti
 			if not external_empty_positions.has(neighbor_key) or perimeter_positions.has(neighbor_key):
 				continue
 
-			perimeter_positions[neighbor_key] = neighbor_grid_pos
+			perimeter_positions[neighbor_key] = Vector3i(neighbor_grid_pos.x, neighbor_grid_pos.y, 1)
 			current_frontier.append(neighbor_grid_pos)
 
 	for layer_index in range(1, perimeter_layer_count):
 		var next_frontier: Array[Vector2i] = []
+		var perimeter_layer_index: int = layer_index + 1
 		for frontier_grid_pos in current_frontier:
 			for neighbor_offset in all_neighbor_offsets:
 				var neighbor_grid_pos: Vector2i = frontier_grid_pos + neighbor_offset
@@ -2112,7 +2124,7 @@ func _build_terrain_perimeter_positions(occupied_positions: Dictionary) -> Dicti
 				if not external_empty_positions.has(neighbor_key) or perimeter_positions.has(neighbor_key):
 					continue
 
-				perimeter_positions[neighbor_key] = neighbor_grid_pos
+				perimeter_positions[neighbor_key] = Vector3i(neighbor_grid_pos.x, neighbor_grid_pos.y, perimeter_layer_index)
 				next_frontier.append(neighbor_grid_pos)
 
 		if next_frontier.is_empty():
@@ -2212,15 +2224,28 @@ func _update_terrain_bounds_from_cells(cells: Array[Cell]) -> void:
 	)
 
 
-func _create_outer_terrain_perimeter_cell(grid_pos: Vector2i) -> Cell:
+func _create_outer_terrain_perimeter_cell(perimeter_grid_data: Vector3i, perimeter_layer_count: int) -> Cell:
+	var grid_pos: Vector2i = Vector2i(perimeter_grid_data.x, perimeter_grid_data.y)
+	var perimeter_layer_index: int = maxi(perimeter_grid_data.z, 1)
 	var perimeter_cell: Cell = Cell.new()
 	perimeter_cell.position = Vector2(float(grid_pos.x), float(grid_pos.y))
 	perimeter_cell.filled = true
 	perimeter_cell.is_floor = false
 	perimeter_cell.is_wall = false
 	perimeter_cell.noise_value = 0.0
-	perimeter_cell.depth = terrain_perimeter_depth_level
+	perimeter_cell.depth = _get_outer_terrain_perimeter_depth(perimeter_layer_index, perimeter_layer_count)
 	return perimeter_cell
+
+
+func _get_outer_terrain_perimeter_depth(perimeter_layer_index: int, perimeter_layer_count: int) -> float:
+	var clamped_outer_depth: float = clampf(float(terrain_perimeter_depth_level), 0.0, 4.0)
+	var clamped_inner_depth: float = clampf(terrain_perimeter_inner_depth_level, 0.0, clamped_outer_depth)
+	if perimeter_layer_count <= 1:
+		return clamped_inner_depth
+
+	var clamped_layer_index: int = clampi(perimeter_layer_index, 1, perimeter_layer_count)
+	var layer_ratio: float = float(clamped_layer_index - 1) / float(perimeter_layer_count - 1)
+	return lerpf(clamped_inner_depth, clamped_outer_depth, layer_ratio)
 
 
 func _grid_position_key(grid_pos: Vector2i) -> String:
@@ -2983,8 +3008,8 @@ func _remove_lava_volume() -> void:
 
 
 ## Converts a discrete depth level into the world-space terrain height.
-func _get_depth_world_height(depth: int) -> float:
-	return _get_depth_level_world_height(float(depth))
+func _get_depth_world_height(depth: float) -> float:
+	return _get_depth_level_world_height(depth)
 
 
 ## Returns the world-space height used by the generated lava surface plane.
@@ -3210,17 +3235,7 @@ func _get_heightmap_detail_noise(world_x: float, world_z: float) -> float:
 func _get_heightmap_inner_blur_bounds(image_width: int, image_height: int) -> Rect2i:
 	if image_width <= 0 or image_height <= 0:
 		return Rect2i(0, 0, 0, 0)
-
-	var perimeter_pixels: int = maxi(terrain_perimeter_cells, 0) * pixels_per_cell
-	if perimeter_pixels <= 0:
-		return Rect2i(0, 0, image_width, image_height)
-
-	var inner_width: int = image_width - (perimeter_pixels * 2)
-	var inner_height: int = image_height - (perimeter_pixels * 2)
-	if inner_width <= 0 or inner_height <= 0:
-		return Rect2i(0, 0, image_width, image_height)
-
-	return Rect2i(perimeter_pixels, perimeter_pixels, inner_width, inner_height)
+	return Rect2i(0, 0, image_width, image_height)
 
 
 func _get_heightmap_blur_helper() -> Object:
@@ -3309,13 +3324,14 @@ func _try_apply_csharp_heightmap_detail_noise(source_image: Image, terrain_grid_
 	return null
 
 
-func _build_wall_heightmap_stamp_data(cells: Array[Cell], terrain_grid_rect: Rect2i) -> Array[Vector3]:
-	var stamp_data: Array[Vector3] = []
+func _build_wall_heightmap_stamp_data(cells: Array[Cell], terrain_grid_rect: Rect2i) -> Array[Vector4]:
+	var stamp_data: Array[Vector4] = []
 	var min_height_ratio: float = clampf(wall_heightmap_noise_min_height_ratio, 0.0, 1.0)
 	for cell in cells:
 		if not cell.is_wall:
 			continue
 
+		var grid_pos: Vector2i = Vector2i(int(cell.position.x), int(cell.position.y))
 		var cell_center_x: float = (float(int(cell.position.x) - terrain_grid_rect.position.x) * float(pixels_per_cell)) + (float(pixels_per_cell) * 0.5)
 		var cell_center_y: float = (float(int(cell.position.y) - terrain_grid_rect.position.y) * float(pixels_per_cell)) + (float(pixels_per_cell) * 0.5)
 		var height_variation_ratio: float = lerpf(
@@ -3323,12 +3339,59 @@ func _build_wall_heightmap_stamp_data(cells: Array[Cell], terrain_grid_rect: Rec
 			1.0,
 			clampf(cell.noise_value, 0.0, 1.0)
 		)
-		stamp_data.append(Vector3(cell_center_x, cell_center_y, height_variation_ratio))
+		stamp_data.append(Vector4(cell_center_x, cell_center_y, height_variation_ratio, _get_wall_heightmap_peak_signature(grid_pos)))
 
 	return stamp_data
 
 
-func _try_apply_csharp_wall_heightmap_blend(image: Image, wall_stamp_data: Array[Vector3]) -> Image:
+func _get_wall_heightmap_peak_signature(grid_pos: Vector2i) -> float:
+	var peak_count: int = _get_wall_heightmap_peak_count(grid_pos)
+	var phase_bucket: int = _get_wall_heightmap_phase_bucket(grid_pos)
+	return float(peak_count) + (float(phase_bucket) / float(WALL_HEIGHTMAP_PHASE_BUCKET_COUNT))
+
+
+func _get_wall_heightmap_peak_count(grid_pos: Vector2i) -> int:
+	var weight_bucket: int = int(posmod(_get_wall_heightmap_hash(grid_pos, 0), _get_wall_heightmap_peak_weight_total()))
+	var cumulative_weight: int = 0
+	for peak_index in range(WALL_HEIGHTMAP_PEAK_COUNT_WEIGHTS.size()):
+		cumulative_weight += WALL_HEIGHTMAP_PEAK_COUNT_WEIGHTS[peak_index]
+		if weight_bucket < cumulative_weight:
+			return MIN_WALL_HEIGHTMAP_PEAK_COUNT + peak_index
+
+	return 4
+
+
+func _get_wall_heightmap_peak_weight_total() -> int:
+	var total_weight: int = 0
+	for peak_weight in WALL_HEIGHTMAP_PEAK_COUNT_WEIGHTS:
+		total_weight += peak_weight
+	return maxi(total_weight, 1)
+
+
+func _get_wall_heightmap_phase_bucket(grid_pos: Vector2i) -> int:
+	var hash_value: int = _get_wall_heightmap_hash(grid_pos, 1)
+	return int(posmod(hash_value, WALL_HEIGHTMAP_PHASE_BUCKET_COUNT))
+
+
+func _get_wall_heightmap_hash(grid_pos: Vector2i, salt: int) -> int:
+	var hash_value: int = grid_pos.x * 73856093
+	hash_value = hash_value ^ (grid_pos.y * 19349663)
+	hash_value = hash_value ^ (random_seed * 83492791)
+	hash_value = hash_value ^ (salt * 265443576)
+	return hash_value & 0x7fffffff
+
+
+func _decode_wall_heightmap_peak_count(peak_signature: float) -> int:
+	var peak_count: int = int(floor(peak_signature))
+	return clampi(peak_count, MIN_WALL_HEIGHTMAP_PEAK_COUNT, MAX_WALL_HEIGHTMAP_PEAK_COUNT)
+
+
+func _decode_wall_heightmap_peak_phase(peak_signature: float) -> float:
+	var peak_fraction: float = peak_signature - floor(peak_signature)
+	return clampf(peak_fraction, 0.0, 0.9990234375) * TAU
+
+
+func _try_apply_csharp_wall_heightmap_blend(image: Image, wall_stamp_data: Array[Vector4]) -> Image:
 	var blur_helper: Object = _get_heightmap_blur_helper()
 	if blur_helper == null:
 		_warn_heightmap_csharp_fallback_once("failed to instantiate C# helper from %s" % HEIGHTMAP_BLUR_HELPER_SCRIPT_PATH)
@@ -3445,14 +3508,13 @@ func _generate_heightmap_texture(cells: Array[Cell]) -> ImageTexture:
 	if blur_radius > 0:
 		print("[Heightmap] Applying Gaussian blur with radius ", blur_radius)
 		image = _apply_gaussian_blur(image, blur_radius, _get_heightmap_inner_blur_bounds(tex_width, tex_height))
-
-	_enforce_outer_terrain_perimeter_depth(image, cells, terrain_grid_rect)
 	
 	# Debug: Print depth distribution
 	var depth_counts: Array[int] = [0, 0, 0, 0, 0]
 	for cell in cells:
 		if cell.depth >= 0 and cell.depth <= 4:
-			depth_counts[cell.depth] += 1
+			var depth_bucket: int = clampi(int(round(cell.depth)), 0, 4)
+			depth_counts[depth_bucket] += 1
 	print("[Heightmap] Depth distribution: D0=", depth_counts[0], " D1=", depth_counts[1], " D2=", depth_counts[2], " D3=", depth_counts[3], " D4=", depth_counts[4])
 	
 	# Store image for collision generation
@@ -3528,15 +3590,12 @@ func _generate_heightmap_texture_async(cells: Array[Cell]) -> ImageTexture:
 		image = await _apply_gaussian_blur_async(image, blur_radius, blur_bounds)
 		_end_generation_scope("heightmap.gaussian_blur", "radius=%d bounds=%dx%d" % [blur_radius, blur_bounds.size.x, blur_bounds.size.y])
 
-	_begin_generation_scope("heightmap.enforce_outer_perimeter")
-	_enforce_outer_terrain_perimeter_depth(image, cells, terrain_grid_rect)
-	_end_generation_scope("heightmap.enforce_outer_perimeter")
-
 	_begin_generation_scope("heightmap.depth_distribution")
 	var depth_counts: Array[int] = [0, 0, 0, 0, 0]
 	for cell in cells:
 		if cell.depth >= 0 and cell.depth <= 4:
-			depth_counts[cell.depth] += 1
+			var depth_bucket: int = clampi(int(round(cell.depth)), 0, 4)
+			depth_counts[depth_bucket] += 1
 	print("[Heightmap] Depth distribution: D0=", depth_counts[0], " D1=", depth_counts[1], " D2=", depth_counts[2], " D3=", depth_counts[3], " D4=", depth_counts[4])
 	_end_generation_scope("heightmap.depth_distribution")
 
@@ -3573,13 +3632,15 @@ func _generate_wall_heightmap_texture_async(cells: Array[Cell]) -> ImageTexture:
 
 
 func _enforce_outer_terrain_perimeter_depth(image: Image, cells: Array[Cell], terrain_grid_rect: Rect2i) -> void:
-	var deepest_depth_normalized: float = 1.0 - (float(terrain_perimeter_depth_level) / 4.0)
-	var deepest_color: Color = Color(deepest_depth_normalized, 0.0, 0.0, 1.0)
-
+	var outer_depth: float = clampf(float(terrain_perimeter_depth_level), 0.0, 4.0)
 	for cell in cells:
 		if cell.is_floor or cell.is_wall:
 			continue
+		if cell.depth < outer_depth - 0.001:
+			continue
 
+		var depth_normalized: float = 1.0 - (clampf(cell.depth, 0.0, 4.0) / 4.0)
+		var depth_color: Color = Color(depth_normalized, 0.0, 0.0, 1.0)
 		var grid_x: int = int(cell.position.x) - terrain_grid_rect.position.x
 		var grid_y: int = int(cell.position.y) - terrain_grid_rect.position.y
 		var px_start_x: int = grid_x * pixels_per_cell
@@ -3590,7 +3651,7 @@ func _enforce_outer_terrain_perimeter_depth(image: Image, cells: Array[Cell], te
 				var img_x: int = px_start_x + px
 				var img_y: int = px_start_y + py
 				if img_x < image.get_width() and img_y < image.get_height():
-					image.set_pixel(img_x, img_y, deepest_color)
+					image.set_pixel(img_x, img_y, depth_color)
 
 
 func _refresh_heightmap_debug_overlay() -> void:
@@ -3684,16 +3745,14 @@ func _apply_wall_heightmap_blend(image: Image, cells: Array[Cell], terrain_grid_
 	if not wall_heightmap_blend_enabled or wall_heightmap_blend_strength <= 0.0:
 		return image
 
-	var wall_stamp_data: Array[Vector3] = _build_wall_heightmap_stamp_data(cells, terrain_grid_rect)
+	var wall_stamp_data: Array[Vector4] = _build_wall_heightmap_stamp_data(cells, terrain_grid_rect)
 	var csharp_result_image: Image = _try_apply_csharp_wall_heightmap_blend(image, wall_stamp_data)
 	if csharp_result_image != null:
 		return csharp_result_image
 	_note_wall_heightmap_blend_backend("gdscript")
 
-	for cell in cells:
-		if not cell.is_wall:
-			continue
-		_stamp_wall_heightmap_cluster(image, cell, terrain_grid_rect)
+	for wall_stamp in wall_stamp_data:
+		_stamp_wall_heightmap_cluster(image, wall_stamp)
 
 	return image
 
@@ -3703,7 +3762,7 @@ func _apply_wall_heightmap_blend_async(image: Image, cells: Array[Cell], terrain
 		return image
 
 	_begin_generation_scope("wall_heightmap.stamp_clusters")
-	var wall_stamp_data: Array[Vector3] = _build_wall_heightmap_stamp_data(cells, terrain_grid_rect)
+	var wall_stamp_data: Array[Vector4] = _build_wall_heightmap_stamp_data(cells, terrain_grid_rect)
 	var csharp_result_image: Image = _try_apply_csharp_wall_heightmap_blend(image, wall_stamp_data)
 	if csharp_result_image != null:
 		_end_generation_scope("wall_heightmap.stamp_clusters", "processed_walls=%d" % [wall_stamp_data.size()])
@@ -3713,11 +3772,8 @@ func _apply_wall_heightmap_blend_async(image: Image, cells: Array[Cell], terrain
 	var wall_blend_yield_interval: int = _get_generation_yield_heightmap_blend_interval()
 	var processed_wall_count: int = 0
 
-	for cell in cells:
-		if not cell.is_wall:
-			continue
-
-		_stamp_wall_heightmap_cluster(image, cell, terrain_grid_rect)
+	for wall_stamp in wall_stamp_data:
+		_stamp_wall_heightmap_cluster(image, wall_stamp)
 
 		processed_wall_count += 1
 		if processed_wall_count % wall_blend_yield_interval == 0:
@@ -3728,28 +3784,22 @@ func _apply_wall_heightmap_blend_async(image: Image, cells: Array[Cell], terrain
 	return image
 
 
-func _stamp_wall_heightmap_cluster(image: Image, cell: Cell, terrain_grid_rect: Rect2i) -> void:
-	var cell_center: Vector2 = Vector2(
-		(float(int(cell.position.x) - terrain_grid_rect.position.x) * float(pixels_per_cell)) + (float(pixels_per_cell) * 0.5),
-		(float(int(cell.position.y) - terrain_grid_rect.position.y) * float(pixels_per_cell)) + (float(pixels_per_cell) * 0.5)
-	)
-	var height_variation_ratio: float = lerpf(
-		clampf(wall_heightmap_noise_min_height_ratio, 0.0, 1.0),
-		1.0,
-		clampf(cell.noise_value, 0.0, 1.0)
-	)
+func _stamp_wall_heightmap_cluster(image: Image, wall_stamp: Vector4) -> void:
+	var cell_center: Vector2 = Vector2(wall_stamp.x, wall_stamp.y)
+	var height_variation_ratio: float = wall_stamp.z
+	if height_variation_ratio <= 0.0:
+		return
+
 	var base_radius_pixels: float = maxf(wall_heightmap_blend_radius_cells * float(pixels_per_cell), 1.0)
 	var peak_radius_pixels: float = maxf(base_radius_pixels * WALL_HEIGHTMAP_PEAK_RADIUS_RATIO, 1.0)
 	var peak_offset_pixels: float = wall_heightmap_peak_offset_cells * float(pixels_per_cell)
-	var peak_offsets: Array[Vector2] = [
-		Vector2(-peak_offset_pixels, -peak_offset_pixels),
-		Vector2(peak_offset_pixels, -peak_offset_pixels),
-		Vector2(-peak_offset_pixels, peak_offset_pixels),
-		Vector2(peak_offset_pixels, peak_offset_pixels),
-	]
+	var peak_count: int = _decode_wall_heightmap_peak_count(wall_stamp.w)
+	var peak_phase: float = _decode_wall_heightmap_peak_phase(wall_stamp.w)
 
 	_raise_heightmap_region(image, cell_center, base_radius_pixels, wall_heightmap_blend_strength * WALL_HEIGHTMAP_BASE_STRENGTH_RATIO * height_variation_ratio)
-	for peak_offset in peak_offsets:
+	for peak_index in range(peak_count):
+		var angle: float = peak_phase + ((TAU * float(peak_index)) / float(peak_count))
+		var peak_offset: Vector2 = Vector2(cos(angle), sin(angle)) * peak_offset_pixels
 		_raise_heightmap_region(image, cell_center + peak_offset, peak_radius_pixels, wall_heightmap_blend_strength * WALL_HEIGHTMAP_PEAK_STRENGTH_RATIO * height_variation_ratio)
 
 

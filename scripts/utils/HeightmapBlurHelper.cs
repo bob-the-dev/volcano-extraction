@@ -4,6 +4,9 @@ using Godot;
 [GlobalClass]
 public partial class HeightmapBlurHelper : RefCounted
 {
+    private const int MinWallPeakCount = 1;
+    private const int MaxWallPeakCount = 6;
+
     public Image BuildCollisionHeightmapImageRf(Image sourceImage, Image wallImage, int sampleWidth, int sampleDepth, float baseAmplitude, float wallAmplitude)
     {
         if (sourceImage == null)
@@ -78,7 +81,7 @@ public partial class HeightmapBlurHelper : RefCounted
     }
 
 
-    public Image ApplyWallHeightmapBlendRf(Image sourceImage, Godot.Collections.Array<Vector3> wallStampData, float baseRadiusPixels, float peakRadiusPixels, float peakOffsetPixels, float baseStrength, float peakStrength)
+    public Image ApplyWallHeightmapBlendRf(Image sourceImage, Godot.Collections.Array<Vector4> wallStampData, float baseRadiusPixels, float peakRadiusPixels, float peakOffsetPixels, float baseStrength, float peakStrength)
     {
         if (sourceImage == null)
         {
@@ -111,7 +114,7 @@ public partial class HeightmapBlurHelper : RefCounted
 
         for (int wallIndex = 0; wallIndex < wallStampData.Count; wallIndex++)
         {
-            Vector3 wallStamp = wallStampData[wallIndex];
+            Vector4 wallStamp = wallStampData[wallIndex];
             float centerX = wallStamp.X;
             float centerY = wallStamp.Y;
             float heightVariationRatio = wallStamp.Z;
@@ -120,11 +123,17 @@ public partial class HeightmapBlurHelper : RefCounted
                 continue;
             }
 
+            int peakCount = DecodeWallPeakCount(wallStamp.W);
+            float peakPhase = DecodeWallPeakPhase(wallStamp.W);
+
             RaiseHeightmapRegion(resultValues, width, height, centerX, centerY, baseRadiusPixels, baseStrength * heightVariationRatio);
-            RaiseHeightmapRegion(resultValues, width, height, centerX - peakOffsetPixels, centerY - peakOffsetPixels, peakRadiusPixels, peakStrength * heightVariationRatio);
-            RaiseHeightmapRegion(resultValues, width, height, centerX + peakOffsetPixels, centerY - peakOffsetPixels, peakRadiusPixels, peakStrength * heightVariationRatio);
-            RaiseHeightmapRegion(resultValues, width, height, centerX - peakOffsetPixels, centerY + peakOffsetPixels, peakRadiusPixels, peakStrength * heightVariationRatio);
-            RaiseHeightmapRegion(resultValues, width, height, centerX + peakOffsetPixels, centerY + peakOffsetPixels, peakRadiusPixels, peakStrength * heightVariationRatio);
+            for (int peakIndex = 0; peakIndex < peakCount; peakIndex++)
+            {
+                float angle = peakPhase + ((Mathf.Tau * peakIndex) / peakCount);
+                float offsetX = Mathf.Cos(angle) * peakOffsetPixels;
+                float offsetY = Mathf.Sin(angle) * peakOffsetPixels;
+                RaiseHeightmapRegion(resultValues, width, height, centerX + offsetX, centerY + offsetY, peakRadiusPixels, peakStrength * heightVariationRatio);
+            }
         }
 
         byte[] resultBytes = new byte[byteCount];
@@ -357,6 +366,21 @@ public partial class HeightmapBlurHelper : RefCounted
         float top = Mathf.Lerp(topLeft, topRight, xLerp);
         float bottom = Mathf.Lerp(bottomLeft, bottomRight, xLerp);
         return Mathf.Lerp(top, bottom, yLerp);
+    }
+
+
+    private static int DecodeWallPeakCount(float peakSignature)
+    {
+        int peakCount = (int)MathF.Floor(peakSignature);
+        return Mathf.Clamp(peakCount, MinWallPeakCount, MaxWallPeakCount);
+    }
+
+
+    private static float DecodeWallPeakPhase(float peakSignature)
+    {
+        float peakFraction = peakSignature - MathF.Floor(peakSignature);
+        peakFraction = Mathf.Clamp(peakFraction, 0.0f, 0.9990234375f);
+        return peakFraction * Mathf.Tau;
     }
 
 
